@@ -1,0 +1,837 @@
+<!DOCTYPE html>
+<head>
+  <title>Oblique Surface</title>  
+
+  <script src='./node_modules/dat.gui/build/dat.gui.min.js'></script>
+  <script src="js/pixpipe.js"></script>  
+  <script src="js/getTextFile.js"></script>    
+  <link href="https://fonts.googleapis.com/css?family=Roboto:300,400,500,700,900" rel="stylesheet">
+  <!--<link rel="stylesheet" href="css/style.css">-->
+
+  <style>
+  body {
+    margin:0;
+    font-family: "Lucida Console", monospace;
+    font-size: 15px;
+    line-height: 18px;
+    overflow: hidden;
+  }
+
+  #info{
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    text-align: center;
+    padding: 5px;
+    font-family: inherit;
+  }
+
+  #fileInfo{
+    pointer-events: none;
+    color: #b64eff;
+  }
+
+  #navInfo {
+    position: absolute;
+    bottom: 0;
+    left: 30%;
+    right: 30%;
+    text-align: center;
+    padding: 5px;
+    font-family: inherit;
+    background-color: rgba(255, 255, 255, 0.7);
+    border-top-style: solid;
+    border-top-width: 1px;
+    border-left-style: solid;
+    border-left-width: 1px;
+    border-right-style: solid;
+    border-right-width: 1px;
+    border-color: #FFF;
+  }
+
+  #fileInput{
+    font-family: inherit;
+  }
+  
+  #surfaceOpener {
+    display: none;
+  }
+
+  </style>
+</head>
+<body>
+
+  <!-- This is a <div> element with an id attribute set to "info." 
+    It acts as a container for the following elements.-->
+  <div id="info"> 
+
+    <!-- This is a <span> element with an id attribute set to "fileInfo." 
+      Initially, it appears to be empty, but it can be dynamically updated 
+      with information or text content using JavaScript. -->
+    <span id="fileInfo"></span>
+    
+    <div id="fileOpener">
+  		Open a structural volume file (NIfTI, Minc2, Pixp)
+
+      <!-- This is an <input> element of type "file" with an id attribute 
+        set to "fileInput." It creates a file input control that allows 
+        the user to select files from their local device when clicked. 
+        This is typically used for file upload functionality.-->
+  		<input type="file" id="fileInput">
+
+      <!--This is a line break <br> element. It adds a line break,
+         creating some separation between the "fileOpener" content 
+         and any content that may come after it.-->
+      <br>
+  	</div>
+
+    <div id="surfaceOpener" >
+  		Open a MNI model surface file
+  		<input type="file" id="fileInputSurface">
+      <br>
+  	</div>
+        
+  </div>
+  <div id="navInfo">(info available when hovering the planes)</div>
+
+  
+  <script type="module">
+    // import modules
+    import * as THREE from "three";
+
+    // import functionalities
+    import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+    import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+    import { TransformControls } from 'three/addons/controls/TransformControls.js';
+
+    // import shaders
+    import vertexShader from './shaders/vertex.glsl'
+    import fragmentShader from './shaders/fragment.glsl'
+
+    // parameters
+    let fileInput = document.getElementById('fileInput'); // load file after input using the html button
+    let file2Buff = new pixpipe.FileToArrayBufferReader();
+    let gui = new dat.GUI();
+    let raycaster = new THREE.Raycaster();
+    let mouse = new THREE.Vector2();
+    let controls = {};
+    let orbit = {};
+    let guiParam = {};
+    let spaceLength = new THREE.Vector3();
+    let spaceStep = new THREE.Vector3();
+    let renderer = null
+    let scene = null
+    let camera = null
+    let shaderMat = null;
+    let boxHelper = null;
+    let container = new THREE.Object3D()
+    let screenContainer = new THREE.Object3D();
+    let meshContainer = new THREE.Object3D();
+    let volumes = [];
+    let sliceMatrixSize = {};
+    let textures = [];
+    let mniVolumeMetadata = {xspace: null, yspace: null, zspace: null};     
+    let clipPlaneDirections = [1, 1, 1];
+    let clipPlanes = [
+      new THREE.Plane( new THREE.Vector3( 1, 0, 0 ), 0 ),
+      new THREE.Plane( new THREE.Vector3( 0, 1, 0 ), 0 ),
+      new THREE.Plane( new THREE.Vector3( 0, 0, 1 ), 0 )
+    ];
+
+    let intersection = new THREE.Vector3(0, 0, 0);
+    let normals = [];
+    let pivots = [];
+
+    // the image is loaded...
+    file2Buff.on("ready", function() {
+      let filenames = this.getMetadata("filenames"); // the name of the file loaded ex T1.nii
+      let volBuff = this.getOutput();                // the volume data in the form of an ArrayBuffer, witch means raw-binary data
+
+      // trying to decode the file
+      let genericDecoder = new pixpipe.Image3DGenericDecoder();
+      genericDecoder.addInput( volBuff );           // addd the raw binary data of the volume
+      genericDecoder.update();                      // the decoder trying to decode the file
+
+      // if nothing was decoded, we exit 
+      if(!genericDecoder.getNumberOfOutputs()){
+        document.getElementById('fileInfo').innerHTML = "Error. This file can not be decoded :(";
+        return;
+      }
+
+      let mniVolume = genericDecoder.getOutput(); // a pixpipe object Image3D that holds the volume data
+
+      if(mniVolume){
+        volumes.push(mniVolume);
+
+        let mosaicFilter = new pixpipe.Image3DToMosaicFilter();
+
+        // this function takes the Image3D and 
+        // outputs multiple Image2D  
+        // slices in a specified orthogonal direction x,y,z 
+        let space = "zspace"; // the axis that we want the slices to be taken
+        mosaicFilter.addInput( mniVolume );
+        mosaicFilter.setMetadata( "axis", space);
+        mosaicFilter.update();
+
+        if( !mosaicFilter.getNumberOfOutputs()){
+          console.log("No output for mosaicFilter.");
+          document.getElementById('fileInfo').innerHTML = "Error.";
+          return;
+        }else{
+
+          // get information about the slices found along the specified axis
+          // along with the pixel dimentions of the slices 
+          let spaceInfo = mniVolume.getMetadata(space);
+          document.getElementById('fileInfo').textContent = filenames[0] + " is composed of "
+            + spaceInfo.space_length + " slices of size "
+            + spaceInfo.width + "x" + spaceInfo.height + "px";
+        }
+
+        // mosaic filter creates multiple outputs that are Image2D. Each Image2D
+        // is a collection of the slices combined like a montage. In we have multiple
+        // slices we might have also multiple outputs Image2Ds.
+        for(var nbOut=0; nbOut<mosaicFilter.getNumberOfOutputs(); nbOut++) {
+
+          // an Image2D that is a combination of multiple slices
+          // sets the min and max values of the voxels inside each Image2D 
+          // to be the global min max of the voxels
+          let outputMosaic = mosaicFilter.getOutput(nbOut);
+          outputMosaic.setMetadata("min", mniVolume.getMetadata("voxel_min"));
+          outputMosaic.setMetadata("max", mniVolume.getMetadata("voxel_max"));
+
+          //var data = outputMosaic.getData();
+          let data = outputMosaic.getDataAsUInt8Array(); // this function was problematic and was corrected. It did not normalize properly
+          let texture = new THREE.DataTexture(
+            data,
+            outputMosaic.getWidth(),
+            outputMosaic.getHeight(),
+            THREE.LuminanceFormat,
+            THREE.UnsignedByteType,
+          );
+          texture.needsUpdate = true;
+          textures.push(texture);
+        }
+
+        // the number of combined slices  horizontaly and vertically inside each Image2D
+        sliceMatrixSize.x = mosaicFilter.getMetadata("gridWidth");
+        sliceMatrixSize.y = mosaicFilter.getMetadata("gridHeight");
+
+        // the size of the voxels in the mni volumn in each direction
+        spaceStep.x = Math.abs(mniVolume.getMetadata("xspace").step);
+        spaceStep.y = Math.abs(mniVolume.getMetadata("yspace").step);
+        spaceStep.z = Math.abs(mniVolume.getMetadata("zspace").step);
+
+        // the size in mm of the mni volumn in each direction
+        spaceLength.x = spaceStep.x * mniVolume.getMetadata("xspace").space_length;
+        spaceLength.y = spaceStep.y * mniVolume.getMetadata("yspace").space_length;
+        spaceLength.z = spaceStep.z * mniVolume.getMetadata("zspace").space_length;
+
+        mniVolumeMetadata.xspace = mniVolume.getMetadata("xspace");
+        mniVolumeMetadata.yspace = mniVolume.getMetadata("yspace");
+        mniVolumeMetadata.zspace = mniVolume.getMetadata("zspace");
+
+        // since the volume is loaded, we can create the 3D env
+        initEnv3D();
+      }else{
+        console.warn("Non-existant output for genericDecoder.");
+      }
+    });
+
+    // event listener of the file input
+    fileInput.addEventListener('change', function(e) {
+      let files = e.target.files;
+      let filenames = {};
+
+      for(var i=0; i<files.length; i++){
+        // set the input, an HTML5 File object and a category (ID)
+        file2Buff.addInput(files[i], i);
+        filenames[i] = files[i].name ;
+      }
+
+      file2Buff.setMetadata("filenames", filenames);
+      document.getElementById("fileOpener").style.display = "none";
+      document.getElementById('fileInfo').textContent = "Decoding volume file file and building 3D texture...";
+      
+      // Perform the reading + conversion ibto ArrayBuffer
+      file2Buff.update();
+		});
+    
+    // event listener of the file input
+    fileInputSurface.addEventListener('change', function(e) {      
+      if(! e.target.files.length ){
+        console.warn("No file was selected.");
+        return;
+      }      
+      let file = e.target.files[0];  
+      let mesh;
+
+      if(file){
+        const loader = new GLTFLoader();
+        loader.load('../data/' + file.name, (glb) => {
+          mesh = glb.scene;                    
+
+          // enable the mesh to be cliped
+          mesh.traverse((child) => {
+            if (child instanceof THREE.Mesh) {
+
+              // visual material properties
+              child.material.transparent = true;
+              child.material.opacity = guiParam.alphaMesh;
+              child.material.side = THREE.DoubleSide;
+
+              // for proper interaction with the mni planes
+              child.renderOrder = 10;
+              child.material.depthWrite = true;
+              child.material.depthTest = true;
+
+              // clipping parameters
+              child.material.clippingPlanes = clipPlanes;
+              child.material.clipIntersection = true;
+              child.material.clipShadows = true;
+
+              meshContainer.add( child );
+            };
+          });
+
+          updateClipPlane();
+          render();   
+        });        
+          
+      }  
+
+    });
+    
+    // initialize the 3D environment
+    function initEnv3D(){
+
+      // init renderer
+      renderer = new THREE.WebGL1Renderer( { antialias: true, alpha: true} );
+      renderer.localClippingEnabled = true;
+      renderer.setPixelRatio( window.devicePixelRatio );
+      renderer.setSize( window.innerWidth, window.innerHeight );
+      renderer.setClearColor( 0xEEEEEE, 1 );
+      document.body.appendChild( renderer.domElement );
+
+      // THREE environment
+      scene = new THREE.Scene();
+
+      // axis helper
+      let axisHelper = new THREE.AxesHelper( 100 );
+      axisHelper.renderOrder = 5;
+      scene.add( axisHelper );
+
+      // camera
+      camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 1, 1000 );
+      camera.position.z = 100;
+      
+      // light
+      scene.add( new THREE.AmbientLight( 0x444444 ) );
+			var light = new THREE.DirectionalLight( 0xffffff, 150 );
+			light.position.set( 100, 100, 100 );
+			camera.add( light );
+      scene.add( camera );
+
+      // container
+      scene.add( container );
+      
+      // orbit 
+      orbit = new OrbitControls( camera, renderer.domElement );
+    
+      // controls
+      controls = new TransformControls( camera, renderer.domElement );
+      controls.attach( container );
+      controls.addEventListener( 'dragging-changed', function ( event ) {
+        orbit.enabled = ! event.value;   
+      });      
+      scene.add( controls );
+
+      // mesh
+      meshContainer.scale.set(-1000,-1000,-1000);
+      meshContainer.position.x = spaceLength.x/2 ;  
+      meshContainer.position.y = spaceLength.y/2 ;
+      meshContainer.position.z = spaceLength.z/2 ;
+      container.add( meshContainer );
+
+      initGui();  
+      initBox();
+      initScreen();
+      render();
+      
+      document.getElementById("surfaceOpener").style.display = "inherit";
+    }
+
+    // the GUI widget on the top right
+    function initGui(){
+      gui.width = 400;
+      
+      let planeFolder = gui.addFolder('Plane Settings');
+      
+      guiParam.xPos = spaceLength.x / 2;
+      let o = planeFolder.add(guiParam, 'xPos', 0, spaceLength.x)
+      .step(0.05)
+      .onChange(function(val){
+        screenContainer.children[0].position.copy(normals[0].clone().multiplyScalar(val - spaceLength.x/2)); 
+        updatePlaneIntersection();
+        updateClipPlane();
+      })
+      .listen();
+      
+      guiParam.yPos = spaceLength.y / 2;
+      planeFolder.add(guiParam, 'yPos', 0, spaceLength.y)
+      .step(0.05)
+      .onChange(function(val){
+        screenContainer.children[1].position.copy(normals[1].clone().multiplyScalar(val - spaceLength.y/2)); 
+        updatePlaneIntersection();
+        updateClipPlane();
+      })
+      .listen();
+
+      guiParam.zPos = spaceLength.z / 2;
+      planeFolder.add(guiParam, 'zPos', 0, spaceLength.z)
+      .step(0.05)
+      .onChange(function(val){
+        screenContainer.children[2].position.copy(normals[2].clone().multiplyScalar(val - spaceLength.z/2)); 
+        updatePlaneIntersection();
+        updateClipPlane();
+      })
+      .listen();
+
+      
+      guiParam.xRot = 0;
+      planeFolder.add(guiParam, 'xRot', -Math.PI/4, Math.PI/4)
+      .step(Math.PI/2 / 500)
+      .onChange(function(val){      
+        let quaternion1 = new THREE.Quaternion().setFromAxisAngle(pivots[0], val);
+        let quaternion2 = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI/2, 0, 0));;
+
+        screenContainer.children[1].position.copy( intersection );
+        screenContainer.children[2].position.copy( intersection );
+
+        screenContainer.children[1].quaternion.copy( quaternion2.multiply(quaternion1) );
+        screenContainer.children[2].quaternion.copy( quaternion1 );
+
+        updatePlaneNormals();
+        updateClipPlane();
+      })
+      .listen();
+
+      guiParam.yRot = 0;
+      planeFolder.add(guiParam, 'yRot', -Math.PI/4, Math.PI/4)
+      .step(Math.PI/2 / 500)
+      .onChange(function(val){
+
+        let quaternion1 = new THREE.Quaternion().setFromAxisAngle(pivots[1], val);
+        let quaternion2 = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, Math.PI/2, 0));;
+
+        screenContainer.children[0].position.copy( intersection );
+        screenContainer.children[2].position.copy( intersection );
+
+        screenContainer.children[0].quaternion.copy( quaternion2.multiply(quaternion1) );
+        screenContainer.children[2].quaternion.copy( quaternion1 );
+        
+        updatePlaneNormals();
+        updateClipPlane();
+      })
+      .listen();
+
+      guiParam.zRot = 0;
+      planeFolder.add(guiParam, 'zRot', -Math.PI/4, Math.PI/4)
+      .step(Math.PI/2 / 500)
+      .onChange(function(val){
+
+        let quaternion1 = new THREE.Quaternion().setFromAxisAngle(pivots[2], val);
+        let quaternion2 = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, Math.PI/2, 0));;
+        let quaternion3 = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI/2, 0, 0));;
+
+        screenContainer.children[0].position.copy( intersection );
+        screenContainer.children[1].position.copy( intersection );
+
+        screenContainer.children[0].quaternion.copy( quaternion1.multiply(quaternion2) );
+        screenContainer.children[1].quaternion.copy( quaternion1.multiply(quaternion3) );
+
+        updatePlaneNormals();
+        updateClipPlane();
+      })
+      .listen();
+
+      guiParam.showPlane1 = true;
+      planeFolder.add(guiParam, 'showPlane1').name('Show plane A')
+      .onChange(function(val){
+        screenContainer.children[0].visible = val;
+      })
+      
+      guiParam.showPlane2 = true;
+      planeFolder.add(guiParam, 'showPlane2').name('Show plane S')
+      .onChange(function(val){
+        screenContainer.children[1].visible = val;
+      })
+      
+      guiParam.showPlane3 = true;
+      planeFolder.add(guiParam, 'showPlane3').name('Show plane C')
+      .onChange(function(val){
+        screenContainer.children[2].visible = val;
+      })
+
+      guiParam.centerPosition = function(){
+        guiParam.xPos = Math.floor(spaceLength.x / 2);
+        guiParam.yPos = Math.floor(spaceLength.y / 2);
+        guiParam.zPos = Math.floor(spaceLength.z / 2);
+        screenContainer.children[0].position.copy(new THREE.Vector3(guiParam.xPos - spaceLength.x/2, 0, 0));
+        screenContainer.children[1].position.copy(new THREE.Vector3(0, guiParam.yPos - spaceLength.y/2, 0));
+        screenContainer.children[2].position.copy(new THREE.Vector3(0, 0, guiParam.zPos - spaceLength.z/2));
+        updateScreenPlane();
+        updateClipPlane();
+      }
+      planeFolder.add(guiParam, 'centerPosition').name('Center position');
+
+      guiParam.resetRotation = function(){
+        guiParam.xRot = 0;
+        guiParam.yRot = 0;
+        guiParam.zRot = 0;
+        screenContainer.children[0].setRotationFromEuler(new THREE.Euler(0, Math.PI/2, 0));
+        screenContainer.children[1].setRotationFromEuler(new THREE.Euler(-Math.PI/2, 0, 0));
+        screenContainer.children[2].setRotationFromEuler(new THREE.Euler(0, 0, 0));
+        updateScreenPlane();
+        updateClipPlane();
+      }
+      planeFolder.add(guiParam, 'resetRotation').name('Reset rotation');
+
+      guiParam.alpha = 0.95;
+      planeFolder.add(guiParam, 'alpha', 0, 1)
+      .step(0.01)
+      .onChange(function(val){
+        shaderMat.uniforms.forcedAlpha.value = val;
+      })
+      
+
+      guiParam.triliInterpol = true;
+      planeFolder.add(guiParam, 'triliInterpol').name('Interpolate')
+      .onChange(function(val){
+
+        shaderMat.uniforms.trilinearInterpol.value = val;
+      })     
+
+        
+      //******************************* mesh **************************
+      let meshFolder = gui.addFolder('Mesh Settings');
+      
+      guiParam.alphaMesh = 0.6;
+      meshFolder.add(guiParam, 'alphaMesh', 0, 1)
+      .step(0.01)
+      .onChange(function(val){
+        for(var i=0; i<meshContainer.children.length; i++){
+          meshContainer.children[i].material.opacity = val;
+        }
+        if(val < 0.05){
+          meshContainer.visible = false;
+        }else{
+          meshContainer.visible = true;
+        }
+      })
+      
+      guiParam.autoHideOctant = true;
+      meshFolder.add(guiParam, 'autoHideOctant').name('Hide octant')
+      .onChange(function(val){
+        renderer.localClippingEnabled = val;
+        
+      })
+
+    }
+    
+    // screens are the planes on which are projected the images.
+    // Here, we create a their custom materials and all
+    function initScreen(){
+
+      let uniforms = {  
+        containerMat: { type: "mat4", value: container.matrix.clone().invert()}, 
+        spaceLength: { type: "vec3", value: spaceLength },
+        spaceStep: { type: "vec3", value: spaceStep }, 
+        nbOfTextureUsed: {  type: "i", value: textures.length },        
+        nbSlicePerRow: { type: "f", value: sliceMatrixSize.x },
+        nbSlicePerCol: { type: "f", value: sliceMatrixSize.y },
+        nbSliceTotal: { type: "f", value: mniVolumeMetadata.zspace.space_length },  
+        forcedAlpha: { type: "f", value: guiParam.alpha },
+        textures: { type: "t", value:  textures },
+        trilinearInterpol: { type: 'b', value: guiParam.triliInterpol},
+      };
+
+      shaderMat = new THREE.ShaderMaterial( {
+        uniforms: uniforms,
+        vertexShader: vertexShader,
+        fragmentShader: fragmentShader,
+        side: THREE.DoubleSide,
+        transparent: true,
+      });
+
+      // the largest side is computed in order for the rotations of the planes to render the nifti properly
+      let largestSide = Math.sqrt(spaceLength.x*spaceLength.x + spaceLength.y*spaceLength.y + spaceLength.z*spaceLength.z) * 2;
+      let xPlaneGeometry = new THREE.PlaneGeometry( largestSide, largestSide, 1 );
+      let yPlaneGeometry = new THREE.PlaneGeometry( largestSide, largestSide, 1 );
+      let zPlaneGeometry = new THREE.PlaneGeometry( largestSide, largestSide, 1 );
+
+      let xPlaneMesh = new THREE.Mesh( xPlaneGeometry, shaderMat );
+      let yPlaneMesh = new THREE.Mesh( yPlaneGeometry, shaderMat );
+      let zPlaneMesh = new THREE.Mesh( zPlaneGeometry, shaderMat );
+
+      xPlaneMesh.rotation.y = Math.PI / 2;
+      yPlaneMesh.rotation.x = - Math.PI / 2;
+
+      xPlaneMesh.renderOrder = 0;
+      yPlaneMesh.renderOrder = 1;
+      zPlaneMesh.renderOrder = 2;
+
+      screenContainer.add( xPlaneMesh );
+      screenContainer.add( yPlaneMesh );
+      screenContainer.add( zPlaneMesh );
+
+      screenContainer.traverse((plane) => {
+        if (plane instanceof THREE.Mesh) {
+          plane.material.transparent = true;
+          plane.material.depthWrite = true;
+          plane.material.depthTest = true;
+        };
+      });      
+
+      screenContainer.position.x = guiParam.xPos - spaceLength.x / 2;
+      screenContainer.position.y = guiParam.yPos - spaceLength.y / 2;
+      screenContainer.position.z = guiParam.zPos - spaceLength.z / 2;
+      
+      screenContainer.rotation.x = guiParam.xRot;
+      screenContainer.rotation.y = guiParam.yRot;
+      screenContainer.rotation.z = guiParam.zRot;  
+
+      container.add( screenContainer );  
+      
+      updateScreenPlane();
+      updateClipPlane();    
+    }
+
+    // creates a red wireframe bouting box around the 3D planes
+    function initBox(){
+            
+      let boxMaterial = new THREE.MeshBasicMaterial();
+      let boxGeom = new THREE.BoxGeometry(
+        spaceLength.x,
+        spaceLength.y,
+        spaceLength.z
+      );
+    
+      let boxMesh = new THREE.Mesh( boxGeom, boxMaterial )
+      boxHelper = new THREE.BoxHelper( boxMesh ,0xff9999 );
+      boxHelper.geometry.computeBoundingBox();
+      container.add( boxHelper );
+         
+      // adjust the camera to the box
+      camera.position.z =  - spaceLength.z;
+      camera.position.y =  spaceLength.y * 2/3;
+      camera.position.x =  spaceLength.x * 2/3;
+      camera.lookAt(new THREE.Vector3(0,0,0));
+    }
+
+    // called max 60 times per sec
+    function render() { 
+      
+      // update uniforms when container is moved
+      shaderMat.uniforms.containerMat.value = container.matrix.clone().invert();  
+
+      raycastPlaneContainer();
+      //determineClosestOctant();
+
+      renderer.render( scene, camera );
+      requestAnimationFrame( render );
+    };
+       
+    function onMouseMove( event ) {
+    	// calculate mouse position in normalized device coordinates
+    	// (-1 to +1) for both components
+    	mouse.x = ( event.clientX / window.innerWidth ) * 2 - 1;
+    	mouse.y = - ( event.clientY / window.innerHeight ) * 2 + 1;
+    }
+
+    function updateClipPlane(){
+
+      screenContainer.updateMatrixWorld();
+      screenContainer.updateMatrix();
+
+      screenContainer.children.forEach( function(screen, index) {
+        screen.updateMatrixWorld();
+        screen.updateMatrix();
+      });
+      
+      clipPlanes[0].setFromNormalAndCoplanarPoint(
+        new THREE.Vector3(0, 0, clipPlaneDirections[0]).applyQuaternion( screenContainer.children[0].quaternion ), // a normal
+        screenContainer.children[0].position.clone() // a point from the plane
+      );
+      
+      clipPlanes[1].setFromNormalAndCoplanarPoint(
+        new THREE.Vector3(0, 0, clipPlaneDirections[1]).applyQuaternion( screenContainer.children[1].quaternion ), // a normal
+        screenContainer.children[1].position.clone() // a point from the plane
+      );
+      
+      clipPlanes[2].setFromNormalAndCoplanarPoint(
+        new THREE.Vector3(0, 0, clipPlaneDirections[2]).applyQuaternion( screenContainer.children[2].quaternion ), // a normal
+        screenContainer.children[2].position.clone() // a point from the plane
+      );
+    }
+
+    function determineClosestOctant(){   
+
+      let octantSignVector = clipPlanes.map((clipPlane) => {
+        const dotProduct = camera.position.dot(clipPlane.normal);
+        return Math.sign(dotProduct)
+      });      
+      
+      if ( !octantSignVector.every((sign) => sign < 0) ) {
+        clipPlaneDirections = octantSignVector.map((sign, index) => -sign * clipPlaneDirections[index]);
+        updateClipPlane(); 
+      } 
+    }
+
+    function raycastPlaneContainer(){
+      if(!screenContainer || !boxHelper.geometry.boundingBox)
+      return;
+      
+      raycaster.setFromCamera( mouse, camera );
+
+      // calculate objects intersecting the picking ray
+      let intersects = raycaster.intersectObject( screenContainer, true );
+      
+      let validIntersect = null;
+      
+      for(var i=0; i<intersects.length; i++){
+        if( boxHelper.geometry.boundingBox.containsPoint( intersects[i].point ) ){
+          validIntersect = intersects[i];
+          break;
+        }
+      }
+      
+      if(validIntersect){
+        
+        let positionInVolume = {
+          x: Math.round((validIntersect.point.x + (spaceLength.x / 2)) / spaceStep.x),
+          y: Math.round((validIntersect.point.y + (spaceLength.y / 2)) / spaceStep.y),
+          z: Math.round((validIntersect.point.z + (spaceLength.z / 2)) / spaceStep.z),
+        }
+        
+        let intensity = volumes[0].getPixel( positionInVolume );
+        
+        document.getElementById("navInfo").innerHTML = "slice A:" + positionInVolume.x + ", S:" + positionInVolume.y + ", C:" + positionInVolume.z +  " value " + intensity;
+      }
+      else{
+        document.getElementById("navInfo").innerHTML = "(info available when hovering the volume)";
+      }
+      
+    }
+     
+    // compute the screen planes normal vectors and pivots
+    function updatePlaneNormals() {
+      screenContainer.children.forEach( function(screen, index) {
+        screen.updateMatrixWorld();
+        screen.updateMatrix();
+      });
+
+      for (let index of [0, 1, 2]) {
+        let unitVector = new THREE.Vector3(0, 0, 1);
+        normals[index] = unitVector.applyQuaternion(screenContainer.children[index].quaternion);      
+      }        
+
+      // update also the pivots
+      pivots[0] = new THREE.Vector3().crossVectors(normals[1], normals[2]);
+      pivots[1] = new THREE.Vector3().crossVectors(normals[2], normals[0]);
+      pivots[2] = new THREE.Vector3().crossVectors(normals[0], normals[1]);
+
+    }
+
+    // compute the intersection point of the screen planes
+    function updatePlaneIntersection() {   
+      screenContainer.children.forEach( function(screen, index) {
+        screen.updateMatrixWorld();
+        screen.updateMatrix();
+      });
+ 
+      let points = [];
+      let distance = [];
+      for (let index of [0, 1, 2]) {
+        points[index] = screenContainer.children[index].position.clone();
+        distance[index] = points[index].dot(normals[index]);
+      }  
+
+      let matrix = new THREE.Matrix3().set(
+        normals[0].x, normals[0].y, normals[0].z, 
+        normals[1].x, normals[1].y, normals[1].z, 
+        normals[2].x, normals[2].y, normals[2].z
+      );   
+        
+      let vectorSum = new THREE.Vector3()
+      .add(pivots[0].clone().multiplyScalar(distance[0]))
+      .add(pivots[1].clone().multiplyScalar(distance[1]))
+      .add(pivots[2].clone().multiplyScalar(distance[2]));
+
+      intersection = vectorSum.divideScalar(matrix.determinant());
+    }
+
+    // update normals, pivots and intersection point
+    function updateScreenPlane() {
+      updatePlaneNormals();
+      updatePlaneIntersection();
+    }
+   
+    // to refresh the aspect ratio when the windows is resized
+    window.addEventListener( 'resize', function () {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize( window.innerWidth, window.innerHeight );
+    }, false );
+
+    window.addEventListener( 'keydown', function ( event ) {
+
+      switch ( event.keyCode ) {
+
+        case 81: // Q
+          controls.setSpace( controls.space === 'local' ? 'world' : 'local' );
+          break;
+
+        case 87: // W
+          controls.setMode( 'translate' );
+          break;
+
+        case 69: // E
+          controls.setMode( 'rotate' );
+          break;
+
+        case 82: // R
+          controls.setMode( 'scale' );
+          break;   
+
+        case 187:
+        case 107: // +, =, num+
+          controls.setSize( controls.size + 0.1 );
+          break;
+
+        case 189:
+        case 109: // -, _, num-
+          controls.setSize( Math.max( controls.size - 0.1, 0.1 ) );
+          break;
+
+        case 68: // D
+          controls.enabled = ! controls.enabled;
+          controls.showX = ! controls.showX;
+          controls.showY = ! controls.showY;
+          controls.showZ = ! controls.showZ;
+          break;
+
+        case 27: // Esc
+          controls.reset();
+          break;
+
+      }
+    });
+    
+    // get normalized mouse coordinates
+    window.addEventListener( 'mousemove', onMouseMove, false );
+    
+  </script>
+
+</body>
+</html>

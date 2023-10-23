@@ -1,0 +1,12 @@
+{
+  "type": "module",
+  "devDependencies": {
+    "glslify": "^7.1.1",
+    "vite": "^4.4.11",
+    "vite-plugin-glsl": "^1.1.2"
+  },
+  "dependencies": {
+    "dat.gui": "^0.7.9",
+    "three": "^0.157.0"
+  }
+}
