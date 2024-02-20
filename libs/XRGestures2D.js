@@ -141,7 +141,7 @@ class XRGestures extends THREE.EventDispatcher {
         this.detector.swipe.direction = undefined;
         this.detector.swipe.directions = [ 'RIGHT', 'UP', 'LEFT', 'DOWN'] ;
 
-        // this.listenGestures();
+        this.listenGestures();
 
 
         // controllers handles

@@ -1,16 +1,16 @@
-import * as THREE from "three";
+import * as THREE from "three"
 import * as PIXPIPE from "../libs/pixpipe.esmodule.js"
 import { GUI } from "lil-gui"
 import { OrbitControls } from "three/addons/controls/OrbitControls.js"
 import { ARButton } from "three/examples/jsm/webxr/ARButton"
 import { XRGestures } from '../libs/XRGestures2D.js'
-import { OBB } from 'three/addons/math/OBB.js';
+import { OBB } from 'three/addons/math/OBB.js'
 import Stats from 'three/examples/jsm/libs/stats.module'
 import vertexShader from '../shaders/vertex_screen.glsl'
 import fragmentShader from '../shaders/fragment_screen.glsl'
 import vertexShader3D from '../shaders/vertex_model.glsl'
 import fragmentShader3D from '../shaders/fragment_model.glsl'
-import { TransformControls } from 'three/addons/controls/TransformControls.js';
+import { TransformControls } from 'three/addons/controls/TransformControls.js'
 
 // place holder variables
 const _vector     = new THREE.Vector3();
@@ -26,6 +26,7 @@ const _points     = new Array( 8 ).fill().map( () => new THREE.Vector3() );
 
 
 // constants
+const _zero    = new THREE.Vector3( 0, 0, 0 );
 const _right   = new THREE.Vector3( 1, 0, 0 );
 const _up      = new THREE.Vector3( 0, 1, 0 );
 const _forward = new THREE.Vector3( 0, 0, 1 );
@@ -33,9 +34,10 @@ const _red     = new THREE.Color( 1, 0, 0 );
 const _green   = new THREE.Color( 0, 1, 0 );
 const _blue    = new THREE.Color( 0, 0, 1 );
 
+
 // global objects
 let camera, scene, renderer, canvas, orbitControls, transformControls, stats; // scene objects
-let display, container, screen, model, brush, volume, mask; // main objects
+let display, container, screen, model, brush, selector, volume, mask; // main objects
 let pointer, raycaster, gestures, reticle; // helper objects
 let hitTestSource, hitTestSourceRequested, hitTestResult; // parameters AR
 
@@ -59,6 +61,7 @@ function setupObjects () {
   container = new THREE.Mesh();
   model     = new THREE.Mesh();
   brush     = new THREE.Mesh();
+  selector  = new THREE.Mesh();
   reticle   = new THREE.Mesh();
   pointer   = new THREE.Vector2();
   raycaster = new THREE.Raycaster();
@@ -117,10 +120,12 @@ function setupScene() {
   display.add( screen );
   display.add( model );
   display.add( brush );
-    setupDisplay();
+  display.add( selector );
+
+  setupDisplay();
 
   // render order
-  [reticle, screen, model, brush, container,].forEach( (obj, i) => obj.renderOrder = i );
+  [reticle, screen, model, selector, brush, container,].forEach( (obj, i) => obj.renderOrder = i );
 
   // event listeners
   window.addEventListener( 'resize', onResize );
@@ -270,7 +275,7 @@ function setupDisplay() {
 
   display.visible = false;
   display.matrixAutoUpdate = false;
-  display.userData.modes = ['Place', 'Inspect', 'Edit',];
+  display.userData.modes = [ 'Place', 'Inspect', 'Segment', 'Edit',  ];
   display.userData.history = [];
   display.userData.future = [];
 
@@ -281,6 +286,7 @@ function setupDisplay() {
   setupScreen();
   setupBrush();
   setupModel();
+  setupSelector();
   updateUI(); 
 }
 
@@ -291,13 +297,20 @@ function updateDisplay() {
   updateContainer();
   updateScreen();
   updateUniforms();
-  updateModel();  
 
-  if ( brush.visible ) {
+  if ( model.visible) updateModel();  
 
-    updateBrush();
+  if ( selector.visible ) {
+
+    updateSelector();
+    console.log( intersectSelectorVertices( gestures.raycasters.handRay[0] )[0] );
 
   }
+
+  if ( brush.visible ) updateBrush();
+
+
+
 }
 
 function setupUniforms() {
@@ -339,14 +352,15 @@ function updateUI() {
     model.material.uniforms.uModelAlpha.value = 1.0;
     model.material.uniforms.uModelAlphaClip.value = 1.0;
 
+    selector.visible = false;
+
     brush.visible = false;
 
-    screen.userData.core.visible = false;
+    screen.userData.center.visible = false;
     screen.userData.monitors.forEach( (monitor) => {
       monitor.renderOrder = 1.0;
 
       const uniforms = monitor.material.uniforms;
-      // uniforms.uPlaneVisible.value = true;
       uniforms.uPlaneAlpha.value = 1.0;     
       uniforms.uBrushVisible.value = false;
     });  
@@ -361,14 +375,15 @@ function updateUI() {
     model.material.uniforms.uModelAlpha.value = 1.0;
     model.material.uniforms.uModelAlphaClip.value = 0.4;
    
+    selector.visible = false;
+
     brush.visible = false;
 
-    screen.userData.core.visible = true;
+    screen.userData.center.visible = true;
     screen.userData.monitors.forEach( (monitor) => {
       monitor.renderOrder = 1.0;
 
       const uniforms = monitor.material.uniforms;
-      // uniforms.uPlaneVisible.value = true;
       uniforms.uPlaneAlpha.value = 1.0;     
       uniforms.uBrushVisible.value = false;
     });  
@@ -383,18 +398,51 @@ function updateUI() {
     model.material.uniforms.uModelAlpha.value = 0.0;
     model.material.uniforms.uModelAlphaClip.value = 0.0;
 
+    selector.visible = false;
+
     brush.visible = true;
   
-    screen.userData.core.visible = false;
+    screen.userData.center.visible = false;
     screen.userData.monitors.forEach( (monitor) => {  
-      const isSelected = (monitor.userData.index === brush.userData.index);   
-      monitor.renderOrder = (isSelected) ? 1.5 : 1.0;
+
+      const isSelected = ( monitor.userData.index === brush.userData.monitorIndex );   
+
+      monitor.renderOrder = isSelected ? 1.5 : 1.0;
 
       const uniforms = monitor.material.uniforms;
-      uniforms.uPlaneAlpha.value = (isSelected) ? 1.0 : 0.6; 
+      uniforms.uPlaneAlpha.value = isSelected ? 1.0 : 0.6; 
       uniforms.uBrushVisible.value = true;   
+
     });  
   }
+
+  if ( display.userData.modes[0] === 'Segment' ) {
+
+    container.material.opacity = 0.0;   
+    container.userData.outline.visible = false;
+
+    model.visible = true;
+    model.material.uniforms.uModelAlpha.value = 0.4;
+    model.material.uniforms.uModelAlphaClip.value = 0.4;
+
+    selector.visible = true;
+
+    brush.visible = false;
+
+    screen.userData.center.visible = false;
+    screen.userData.monitors.forEach( (monitor) => {
+
+      monitor.renderOrder = 1.0;
+
+      const uniforms = monitor.material.uniforms;
+      uniforms.uPlaneAlpha.value = 1.0;     
+      uniforms.uBrushVisible.value = false;
+
+    });  
+  }
+
+
+  
 }
 
 // volume
@@ -542,6 +590,7 @@ function setupContainer() {
   const size = new THREE.Vector3().copy( volume.userData.size ).addScalar( offset );
   const geometry = new THREE.BoxGeometry( ...size.toArray() );
   const material = new THREE.MeshBasicMaterial( { 
+
     color: 0xff9999, 
     side: THREE.DoubleSide, 
     visible: true, 
@@ -549,22 +598,28 @@ function setupContainer() {
     opacity: 0.2,
     depthTest: true,
     depthWrite: true,
-  })
-  container.geometry = geometry;
-  container.material = material;
+
+  });
 
   const box = new THREE.Box3().setFromCenterAndSize( new THREE.Vector3(), size );
   const obb = new OBB().fromBox3( box );
-  const outline = new THREE.Box3Helper( box, 0xff9999 ); 
-  container.add( outline );
+  const outline = new THREE.Box3Helper( box, material.color ); 
 
-  container.userData.obb = obb; // world cs
+  container.geometry = geometry;
+  container.material = material;
+
+  container.userData.obb = obb;
   container.userData.obb0 = new OBB().copy( obb );
   container.userData.outline = outline;
+
+  container.add( outline );
+
 }
 
 function updateContainer() {
+
   container.userData.obb.copy( container.userData.obb0 ).applyMatrix4( container.matrixWorld );
+
 }
 
 function intersectContainer( rayOrOrigin, direction ) {
@@ -583,8 +638,10 @@ function intersectContainer( rayOrOrigin, direction ) {
 
   // remove duplicates
   intersections = intersections.filter( (result, i) => {
+
     const distance = result.distance;
-    return !Boolean( intersections.slice(i + 1).some( (result) => Math.abs(result.distance - distance)  < 1e-6 ) )
+    return !Boolean( intersections.slice(i + 1).some( (result) => Math.abs(result.distance - distance)  < 1e-6 ) );
+
   });
 
   return intersections;
@@ -678,11 +735,11 @@ function setupScreen () {
     screen.add( monitor );
   });
 
-  setupAxis();
-  setupCore();
+  setupScreenAxis();
+  setupScreenCenter();
 }
 
-function setupAxis () {
+function setupScreenAxis () {
   // FOR SOME REASON IF SCREEN HAS NON IDENTITY MATRIX AXIS ARE NOT CORRECT
 
   screen.userData.monitors.forEach( (monitor, i) => {
@@ -704,7 +761,7 @@ function setupAxis () {
   });
 }
 
-function setupCore () {
+function setupScreenCenter () {
 
   const radius = 0.05 * volume.userData.size.length();
   const geometry = new THREE.OctahedronGeometry( radius, 10 );
@@ -718,11 +775,11 @@ function setupCore () {
     depthWrite: true,
   })
 
-  const core = new THREE.Mesh( geometry, material );
-  core.renderOrder = 1;
-  screen.add( core );
+  const center = new THREE.Mesh( geometry, material );
+  center.renderOrder = 1;
+  screen.add( center );
 
-  screen.userData.core = core;
+  screen.userData.center = center;
 }
 
 function updateScreen () { 
@@ -744,10 +801,10 @@ function updateScreen () {
     uniforms.uPlaneOrigin.value.copy( display.userData.uPlaneOrigin );   
   });
 
-  updateAxis();
+  updateScreenAxis();
 }
 
-function updateAxis () {
+function updateScreenAxis () {
 
   screen.userData.monitors.forEach( (monitor) => {
 
@@ -763,13 +820,6 @@ function updateAxis () {
       axis.setLength( axis.userData.points[0].distanceTo( axis.userData.points[1] ), 0.02, 0.01 );
     }    
   });
-
-}
-
-function intersectsCore ( origin, direction ) {
-
-  raycaster.set( origin, direction );
-  return raycaster.intersectObject( screen.userData.core, false ).length > 0;
 
 }
 
@@ -789,16 +839,36 @@ function intersectScreen ( rayOrOrigin, direction ) {
   // compute intersection
   let intersections = [];
   screen.userData.monitors.forEach( (monitor) => {
+
     intersections.push( raycaster.intersectObject( monitor, false ) [0] );
+
   });
 
   // filter intersections
   intersections.sort( (a, b) => a.distance - b.distance );
   intersections = intersections.filter( (intersection) => 
+
     intersection && container.userData.obb.containsPoint( intersection.point )
+
   );
 
   return intersections;
+}
+
+function intersectsScreenCenter ( rayOrOrigin, direction ) {
+
+  if ( rayOrOrigin instanceof THREE.Ray && direction === undefined ) {
+
+    raycaster.set( rayOrOrigin.origin, rayOrOrigin.direction );
+
+  } else {
+
+    raycaster.set( rayOrOrigin, direction );
+
+  }
+
+  return raycaster.intersectObject( screen.userData.center, false ).length > 0;
+
 }
 
 // model
@@ -966,11 +1036,11 @@ function updateBrush() {
   }) [0];
 
 
-  brush.userData.index = undefined;
+  brush.userData.monitorIndex = undefined;
 
   if ( selected ) {
 
-    brush.userData.index = selected.object.userData.index;
+    brush.userData.monitorIndex = selected.object.userData.index;
     brush.userData.plane.copy( selected.object.userData.plane );
     brush.position.copy( display.worldToLocal( selected.point ) );
     brush.updateMatrix();    
@@ -993,146 +1063,297 @@ function updateBrush() {
 
 }
 
-// helpers
+// selector 
 
-function loadNIFTI ( file ) {
-  return new Promise((resolve, reject) => {
-    
-    if ( ! file ) reject("Error: No file selected");   
-    const reader  = new PIXPIPE.FileToArrayBufferReader();
-    reader.addInput(file);
-    reader.update();
+function setupSelector () {
+  
+  selector.clear();
 
-    reader.on("ready", function () {
+  const offset = volume.userData.size.length() *  0.00001;
+  selector.userData.size = volume.userData.size.clone().divideScalar( 2 ).addScalar( offset );
+  
+  selector.geometry = new THREE.BoxGeometry( ...selector.userData.size.toArray() );
+  selector.material = new THREE.MeshBasicMaterial( { 
 
-      const decoder = new PIXPIPE.Image3DGenericDecoder();  
-      decoder.addInput( this.getOutput() );
-      decoder.update();
+    color: 0x0055ff, 
+    side: THREE.DoubleSide, 
+    visible: true, 
+    transparent: true,
+    opacity: 0.2,
+    depthTest: true,
+    depthWrite: true,
 
-      if ( ! decoder.getOutput() ) reject("Error: File cannot be decoded");
-      const image3D = decoder.getOutput();
-      resolve( image3D );
-    });
   });
+  
+  setupSelectorObb();
+  setupSelectorVertices();
+  setupSelectorFaces();
+
 }
 
-function saveNIFTI ( file ) {
+function setupSelectorObb () {
 
-  if (nifti.isCompressed(event.target.result)) {
+  selector.geometry.computeBoundingBox();
+  
+  selector.userData.obb = new OBB().fromBox3( selector.geometry.boundingBox );
+  selector.userData.obb0 = selector.userData.obb.clone();
+  selector.userData.outline = new THREE.Box3Helper( selector.geometry.boundingBox, selector.material.color );
 
-    fileDecompressed = nifti.decompress(event.target.result);
+  selector.add( selector.userData.outline );  
+
+}
+
+function setupSelectorVertices () {
+   
+  // compute vertices positions
+
+  const halfSize = selector.userData.obb.halfSize.clone();
+  const positions = new Array( 8 ).fill();
+
+  positions[0] = new THREE.Vector3(  halfSize.x,  halfSize.y,  halfSize.z );
+  positions[1] = new THREE.Vector3(  halfSize.x,  halfSize.y, -halfSize.z );
+  positions[2] = new THREE.Vector3(  halfSize.x, -halfSize.y,  halfSize.z );
+  positions[3] = new THREE.Vector3(  halfSize.x, -halfSize.y, -halfSize.z );
+  positions[4] = new THREE.Vector3( -halfSize.x,  halfSize.y,  halfSize.z );
+  positions[5] = new THREE.Vector3( -halfSize.x,  halfSize.y, -halfSize.z );
+  positions[6] = new THREE.Vector3( -halfSize.x, -halfSize.y,  halfSize.z );
+  positions[7] = new THREE.Vector3( -halfSize.x, -halfSize.y, -halfSize.z );
+
+  // add meshed to vertices
+
+  const radius = selector.userData.obb.halfSize.length() * 0.07;
+  const geometry = new THREE.SphereGeometry( radius );
+  const material = selector.material.clone();
+  
+  material.transparent = false;
+
+  selector.userData.vertices = new Array( positions.length ).fill();
+
+  for ( let i = 0; i < positions.length; i++ ) {
+
+    selector.userData.vertices[i] = new THREE.Mesh( geometry, material ); 
+    selector.userData.vertices[i].position.copy( positions[i] );
+
+    selector.userData.vertices[i].userData.sphere = new THREE.Sphere( new THREE.Vector3(), radius );
+    selector.userData.vertices[i].userData.sphere0 = selector.userData.vertices[i].userData.sphere.clone();
+
+    selector.add( selector.userData.vertices[i] );
+
+  }
+
+}
+
+function setupSelectorFaces () {
+
+  const halfSize = selector.userData.obb.halfSize.clone();
+  
+  selector.userData.faces = new Array( 6 ).fill();
+
+  selector.userData.faces[0] = new THREE.Plane( new THREE.Vector3(  1,  0,  0 ), halfSize.x );
+  selector.userData.faces[1] = new THREE.Plane( new THREE.Vector3( -1,  0,  0 ), halfSize.x );
+  selector.userData.faces[2] = new THREE.Plane( new THREE.Vector3(  0,  1,  0 ), halfSize.y );
+  selector.userData.faces[3] = new THREE.Plane( new THREE.Vector3(  0, -1,  0 ), halfSize.y );
+  selector.userData.faces[4] = new THREE.Plane( new THREE.Vector3(  0,  0,  1 ), halfSize.z );
+  selector.userData.faces[5] = new THREE.Plane( new THREE.Vector3(  0,  0, -1 ), halfSize.z );
+
+  selector.userData.faces0 = selector.userData.faces.map( (face) => face.clone() );
+
+}
+
+function updateSelector () {
+
+  updateSelectorObb();
+  updateSelectorVertices();
+  updateSelectorFaces();
+
+}
+
+function updateSelectorObb () {
+
+  selector.userData.obb.copy( selector.userData.obb0 ).applyMatrix4( selector.matrixWorld );
+
+}
+
+function updateSelectorVertices () {
+
+  let vertex;
+
+  for ( let i = 0; i < selector.userData.vertices.length; i++ ) {
+
+    vertex = selector.userData.vertices[i];
+    vertex.userData.sphere.copy( vertex.userData.sphere0 ).applyMatrix4( vertex.matrixWorld );
+
+  }
+
+}
+
+function updateSelectorFaces () {
+
+  for ( let i = 0; i < selector.userData.faces.length; i++ ) {    
+    
+    selector.userData.faces[i].copy( selector.userData.faces0[i] ).applyMatrix4( selector.matrixWorld );
+
+  }
+
+}
+
+function intersectSelector ( rayOrOrigin, direction ) {
+
+  if ( rayOrOrigin instanceof THREE.Ray && direction === undefined ) {
+
+    raycaster.set( rayOrOrigin.origin, rayOrOrigin.direction );
 
   } else {
 
-    fileDecompressed = event.target.result;
+    raycaster.set( rayOrOrigin, direction );
 
   }
+
+  let intersections = raycaster.intersectObject( selector, false );
+
+  // remove duplicates
+
+  intersections = intersections.filter( (intersection0, i) => {
+
+    return ! intersections.slice( i + 1 ).some( (intersection1) => Math.abs( intersection1.distance - intersection0.distance ) < 1e-6 );
+
+  });
+
+  return intersections;
+
+}
+
+function intersectSelectorVertices ( rayOrOrigin, direction ) {
+
+  if ( rayOrOrigin instanceof THREE.Ray && direction === undefined ) {
+
+    raycaster.set( rayOrOrigin.origin, rayOrOrigin.direction );
+
+  } else {
+
+    raycaster.set( rayOrOrigin, direction );
+
+  }
+
+  // get ray intersection with vertex sphere
+
+  let indices = [];
+  let points = [];  
+
+  for ( let i = 0; i < selector.userData.vertices.length; i++ ) {
+
+    let vertex = selector.userData.vertices[i];
+
+    points.push( raycaster.ray.intersectSphere( vertex.userData.sphere, _position ) );
+
+    indices.push( i );
+
+  }
+
+  // sort intersections based on distance from camera
+
+  indices = indices.filter( (i) => points[i] instanceof THREE.Vector3 );
+
+  let distance = [];
+
+  for ( let i = 0; i < indices.length; i++ ) {
+    
+    let n = indices[i];
+
+    distance.push( points[n].distanceTo( raycaster.ray.origin ) );
+
+  }
+
+  indices.sort( (i, j) => distance[i] - distance[j] );
+
+  // create intersection object
+
+  let intersections = [];
+
+  for ( let i = 0; i < indices.length; i++ ) {
+
+    let n = indices[i];
+
+    intersections.push( {
   
-  const niftiHeaderTmp = fileDecompressed.slice(0, 352);
-  const tmp = new Uint16Array(niftiHeaderTmp, 0, niftiHeaderTmp.length);
-  tmp[35] = 2;
-  const data = [tmp, new Uint16Array(masks.buffer, 0, masks.buffer.length)];
-  const fileName = "masks.nii";
-  saveData(data, fileName);
+      object: selector.userData.vertices[n],
+      point: points[n],
+      distance: distance[n],
+  
+    } );
 
-}
-
-function saveData(data, fileName) {
-
-	const a = document.createElement("a");
-	document.body.appendChild(a);
-	const blob = new Blob(data);
-	const url = window.URL.createObjectURL(blob);
-	a.href = url;
-	a.download = fileName;
-	a.click();
-	window.URL.revokeObjectURL(url);
-
-}
-
-function projectBoxOnPlane ( box, plane ) {
-
-  _points[0].set(box.min.x, box.min.y, box.min.z);
-  _points[1].set(box.max.x, box.min.y, box.min.z);
-  _points[2].set(box.min.x, box.max.y, box.min.z);
-  _points[3].set(box.max.x, box.max.y, box.min.z);
-  _points[4].set(box.min.x, box.min.y, box.max.z);
-  _points[5].set(box.max.x, box.min.y, box.max.z);
-  _points[6].set(box.min.x, box.max.y, box.max.z);
-  _points[7].set(box.max.x, box.max.y, box.max.z);
-
-  _points.forEach( (point) => plane.projectPoint( point, point ) );
-
-  return _box.setFromPoints( _points );
-}
-
-function positionToSample ( position ) {
-  // convert position in display's local coordinates to voxel sample vector index
-
-  const samples = mask.userData.samples;
-  const voxel = mask.userData.voxelSize;
-  const center = new THREE.Vector3().copy( mask.userData.size ).divideScalar( 2 );
-
-  const indices = new THREE.Vector3(
-    Math.round( (position.x + center.x) / voxel.x ),
-    Math.round( (position.y + center.y) / voxel.y ),
-    Math.round( (position.z + center.z) / voxel.z ),
-  );
-
-  const minIndices = new THREE.Vector3();
-  const maxIndices = new THREE.Vector3().copy( samples ).subScalar( 1 );
-  indices.clamp( minIndices, maxIndices );
-
-  return indices;
-}
-
-function positionToAxis ( position ) {
-  // position in world coordinates
-
-  // compute the local screen vector of the position
-  const vector = position.clone();
-  screen.worldToLocal( vector );
-
-  // determine in which octant the vector lies
-  const octant = vector.toArray().map( (value) => Math.sign( value ) )
-  const indices = octant.map( sign => Math.floor( sign > 0) );
-
-  // compute the monitor lengths to the container
-  const monitorLengths = screen.userData.monitors.map( (monitor, i) => 
-      monitor.userData.axis.userData.points[indices[i]].length()
-  );
-
-  // normalize the local position vector to be inside the unit cube
-  const scale = new THREE.Vector3().fromArray( monitorLengths );
-  vector.divide( scale );
-
-  // compute the correlation of the vector with each axis
-  const axes = [ _right, _up, _forward ].map( (axis) => axis.clone() );
-  const correlation = axes.map( (axis) => 
-    Math.abs( _vector.copy( vector ).projectOnVector( axis ).length() )
-  );
+  } 
  
-  // determine the closest axis to the vector
-  const index = correlation.indexOf( Math.max(...correlation) );
-  const axis = axes[ index ].multiplyScalar( octant[ index ] );
-  axis.transformDirection( screen.matrixWorld );
+  return intersections;
 
-  // return the axis in world coordinates
-  return axis;
 }
 
+function intersectSelectorFaces ( rayOrOrigin, direction ) {
+
+ 
+  if ( rayOrOrigin instanceof THREE.Ray && direction === undefined ) {
+
+    raycaster.set( rayOrOrigin.origin, rayOrOrigin.direction );
+
+  } else {
+
+    raycaster.set( rayOrOrigin, direction );
+
+  }
+
+  // get ray intersection with vertex sphere
+
+  let indices = new Array( selector.userData.faces.length ).fill();
+  
+  let points = new Array( selector.userData.faces.length ).fill();
+
+  for ( let i = 0; i < selector.userData.faces.length; i++ ) {
+
+    indices[i] = i;
+
+    raycaster.ray.intersectPlane( vertex.userData.faces[i], points[i] );
+
+  }
+
+  // sort intersections based on distance from camera
+
+  indices = indices.filter( (i) => points[i] instanceof THREE.Vector3 );
+  indices = indices.filter( (i) => selector.userData.obb.containsPoint( points[i] ) );
+
+  indices.sort( (i, j) => points[i].distanceTo( raycaster.ray.origin ) - points[j].distanceTo( raycaster.ray.origin ) );
+
+
+  // create intersection object
+
+  let n = indices[0];
+
+  let intersection = {
+    
+    object: selector.userData.faces[n],
+    point: points[n],
+
+  }
+
+  return intersection;
+
+}
+ 
 // events
 
 function onVolumeUpload ( event ) {
   
   loadNIFTI( event.target.files[0] ).then( (image3D) => {
 
-    updateVolume( image3D );   
+    updateVolume( image3D );  
+
     setupContainer(); 
     setupScreen();
     setupModel();
+    setupSelector();
+
     updateDisplay();
     updateUI();
+
     display.visible = true;
 
   });
@@ -1252,8 +1473,9 @@ function onPolytap ( event ) {
   if ( event.numTaps === 2 ) {
         
     if ( display.userData.modes[0] === 'Place' ) placeDisplay( event );
-    if ( display.userData.modes[0] === 'Inspect' ) hideMonitor( event );
+    if ( display.userData.modes[0] === 'Inspect' ) hideScreenMonitor( event );
     if ( display.userData.modes[0] === 'Edit' ) toggleBrush( event );
+    if ( display.userData.modes[0] === 'Segment' ) ;
 
   }
 
@@ -1271,6 +1493,8 @@ function onSwipe ( event ) {
     if ( display.userData.modes[0] === 'Place'   ) undoDisplay( event );
     if ( display.userData.modes[0] === 'Inspect' ) undoScreen( event );
     if ( display.userData.modes[0] === 'Edit'    ) undoMask( event );
+    if ( display.userData.modes[0] === 'Segment' ) ;
+
 
   }
 
@@ -1279,6 +1503,8 @@ function onSwipe ( event ) {
     if ( display.userData.modes[0] === 'Place'   ) redoDisplay( event );
     if ( display.userData.modes[0] === 'Inspect' ) redoScreen( event );
     if ( display.userData.modes[0] === 'Edit'    ) redoMask( event );
+    if ( display.userData.modes[0] === 'Segment' ) ;
+
     
   }
 
@@ -1291,26 +1517,19 @@ function onHold ( event ) {
   if ( display.userData.modes[0] === 'Place'   ) moveDisplay( event );
   if ( display.userData.modes[0] === 'Inspect' ) {
 
-    if ( event.start ) {
-
-      gestures.controller[0].getWorldPosition( _position );
-      gestures.controller[0].getWorldDirection( _direction ).negate();
-      event.userData.flag = intersectsCore( _position, _direction );
-
-    }
-
-    if ( event.userData.flag ) {
+    if ( intersectsScreenCenter( gestures.raycasters.handRay[0] ) ) {
 
       moveScreen( event );
 
     } else {
 
-      moveMonitor( event );
+      moveScreenMonitor( event );
 
     }
 
   }
   if ( display.userData.modes[0] === 'Edit'    ) editMask( event );
+  if ( display.userData.modes[0] === 'Segment' ) ;
 
 }
 
@@ -1319,8 +1538,10 @@ function onPan ( event ) {
   // console.log(`pan: ${display.userData.modes[0]}`);
 
   if ( display.userData.modes[0] === 'Place'   ) rotateDisplay( event );
-  if ( display.userData.modes[0] === 'Inspect' ) rotateMonitors( event );
+  if ( display.userData.modes[0] === 'Inspect' ) rotateScreenMonitor( event );
   if ( display.userData.modes[0] === 'Edit'    ) ;
+  if ( display.userData.modes[0] === 'Segment' ) ; //moveSelectorVertex( event );
+
 
 }
   
@@ -1331,6 +1552,8 @@ function onPinch ( event ) {
   if ( display.userData.modes[0] === 'Place') resizeDisplay( event );
   if ( display.userData.modes[0] === 'Inspect') resizeDisplay( event );
   if ( display.userData.modes[0] === 'Edit') resizeBrush( event );
+  if ( display.userData.modes[0] === 'Segment' ) ;
+
 } 
 
 function onTwist ( event ) {
@@ -1340,6 +1563,8 @@ function onTwist ( event ) {
   if ( display.userData.modes[0] === 'Place') rollDisplay( event );
   if ( display.userData.modes[0] === 'Inspect') rollScreen( event );
   if ( display.userData.modes[0] === 'Edit') contrastScreen( event );
+  if ( display.userData.modes[0] === 'Segment' ) ;
+
 }
   
 function onExplode ( event ) {
@@ -1353,6 +1578,7 @@ function onImplode ( event ) {
   if ( display.userData.modes[0] === 'Place') resetDisplay( event );
   if ( display.userData.modes[0] === 'Inspect') resetScreen( event );
   if ( display.userData.modes[0] === 'Edit') resetMask( event );
+  if ( display.userData.modes[0] === 'Segment' ) ;
 
 }
 
@@ -1632,175 +1858,6 @@ function saveScreen ( event ) {
 
 }
 
-function hideMonitor ( event ) {
-
-  if ( event.end ) {
-
-    const selected = intersectScreen( gestures.raycasters.handRay[0] )[0];
-  
-    if ( selected ) {
-  
-      saveScreen( event );
-      
-      const uniforms = selected.object.material.uniforms;
-      uniforms.uPlaneVisible.value = ! uniforms.uPlaneVisible.value;
-  
-    }
-    
-  }
-
-}
-
-function moveMonitor (event) {
-
-  let data = event.userData;
-
-  if (event.start) {
-  
-    data.selected = intersectScreen( gestures.raycasters.handRay[0] )
-    .filter( (intersection) => intersection.object.material.uniforms.uPlaneVisible.value ) [0];
-
-    if ( data.selected ) {
-
-      saveScreen( event );
-
-      scene.attach( screen ); // screen becomes a world object
-      updateScreen();
-
-      data.translation = new THREE.Vector3(); // world cs
-      data.direction = data.selected.object.userData.plane.normal.clone(); // world cs 
-      data.position = screen.position.clone(); // world cs
-      data.position0 = screen.position.clone(); // world cs
-
-      const normal = camera.getWorldDirection( _direction ).projectOnPlane( data.direction ).normalize();
-      data.origin = data.selected.point.clone(); // world cs
-      data.plane = new THREE.Plane().setFromNormalAndCoplanarPoint(normal, data.origin); // world cs
-      data.point = new THREE.Vector3(); // world cs  
-
-      model.material.uniforms.uModelAlpha.value = 0.4;
-      model.material.uniforms.uModelAlphaClip.value = 0.4;
-      model.material.needsUpdate;
-      updateModel();
-
-    }
-  }
-
-  if ( event.current && data.selected ) {
-
-    // update plane normal depending on camera 
-    camera.getWorldDirection(data.plane.normal).projectOnPlane(data.direction).normalize();
-
-    // intersect ray and plane
-    gestures.raycasters.handRay[0].intersectPlane(data.plane, data.point); // world cs
-
-    // move screen depending on intersection
-    if ( data.point ) {
-
-      data.translation.subVectors(data.point, data.origin).projectOnVector(data.direction);
-      data.position.copy(data.position0).add(data.translation);
-
-      // move screen only if the new position is inside the container
-      if ( container.userData.obb.containsPoint(data.position) ) {
-
-        screen.position.copy( data.position );
-
-        updateScreen();
-      }
-    }
-  }
-
-  if ( event.end && data.selected ) {
-
-    display.attach(screen);
-    updateScreen();
-
-    model.material.uniforms.uModelAlpha.value = 1.0;
-    model.material.uniforms.uModelAlphaClip.value = 0.4;
-    model.material.needsUpdate;
-    updateModel();
-
-    data = {};
-
-
-  }
-}
-
-function rotateMonitors ( event ) {
-
-  let data = event.userData;
-
-  if ( event.start ){
-
-    // get screen intersections with visible monitors
-    data.selected = intersectScreen( gestures.raycasters.handRay[0] )
-    .filter( (intersection) => intersection.object.material.uniforms.uPlaneVisible.value )[0];
-   
-    if ( data.selected ) {
-      
-      saveScreen( event );
-
-      scene.attach( screen ); // screen becomes a world object
-      updateScreen();
-
-      data.point = data.selected.point.clone(); // world cs
-      data.axis = positionToAxis( data.point ); // world cs
-
-      screen.getWorldPosition( _position ); // world cs
-      data.center = data.point.clone().sub( _position ).projectOnVector( data.axis ).add( _position ); // world cs  
-      data.plane = new THREE.Plane().setFromNormalAndCoplanarPoint( data.axis, data.center ); // world cs
-
-      data.pointer = data.point.clone().sub( data.center ); // world cs
-      data.reference = data.pointer.clone().normalize(); // world cs
-      data.orthogonal = data.reference.clone().applyAxisAngle( data.axis, Math.PI/2 ).normalize(); // world cs
-     
-      data.radius = new THREE.Vector2();
-      data.angle = 0;
-      data.quaternion0 = screen.quaternion.clone();
-      data.quaternion = new THREE.Quaternion(); 
-
-      model.material.uniforms.uModelAlpha.value = 0.4;
-      model.material.uniforms.uModelAlphaClip.value = 0.4;
-      model.material.needsUpdate;
-      updateModel();
-
-    }
-  } 
-
-  if ( event.current && data.selected ) {
-          
-    gestures.raycasters.handRay[0].intersectPlane( data.plane, data.point ); // world cs
-
-    if ( data.point ) {
-
-      data.pointer.copy( data.point ).sub( data.center ); // world cs
-      data.radius.set( data.pointer.dot( data.reference ), data.pointer.dot( data.orthogonal ) );
-
-      data.angle = ( data.radius.length() > 1e-2 ) ? Math.atan2( data.radius.y, data.radius.x ) : 0;   
-      
-      screen.quaternion.copy( data.quaternion0 );
-      screen.rotateOnWorldAxis( data.axis, data.angle ); 
-
-      updateScreen();          
-
-    }
-
-  } 
-  
-  if ( event.end ) {
-
-    display.attach( screen );    
-    
-    model.material.uniforms.uModelAlpha.value = 1.0;
-    model.material.uniforms.uModelAlphaClip.value = 0.4;
-    model.material.needsUpdate;
-    updateModel();
-
-    data = {};
-
-  } 
-
-}
-
 function moveScreen ( event ) {
 
   let data = event.userData;
@@ -2012,8 +2069,176 @@ function redoScreen ( event ) {
 
 }
 
-// brush gesture actions
+function hideScreenMonitor ( event ) {
 
+  if ( event.end ) {
+
+    const selected = intersectScreen( gestures.raycasters.handRay[0] )[0];
+  
+    if ( selected ) {
+  
+      saveScreen( event );
+      
+      const uniforms = selected.object.material.uniforms;
+      uniforms.uPlaneVisible.value = ! uniforms.uPlaneVisible.value;
+  
+    }
+    
+  }
+
+}
+
+function moveScreenMonitor (event) {
+
+  let data = event.userData;
+
+  if (event.start) {
+  
+    data.selected = intersectScreen( gestures.raycasters.handRay[0] )
+    .filter( (intersection) => intersection.object.material.uniforms.uPlaneVisible.value ) [0];
+
+    if ( data.selected ) {
+
+      saveScreen( event );
+
+      scene.attach( screen ); // screen becomes a world object
+      updateScreen();
+
+      data.translation = new THREE.Vector3(); // world cs
+      data.direction = data.selected.object.userData.plane.normal.clone(); // world cs 
+      data.position = screen.position.clone(); // world cs
+      data.position0 = screen.position.clone(); // world cs
+
+      const normal = camera.getWorldDirection( _direction ).projectOnPlane( data.direction ).normalize();
+      data.origin = data.selected.point.clone(); // world cs
+      data.plane = new THREE.Plane().setFromNormalAndCoplanarPoint(normal, data.origin); // world cs
+      data.point = new THREE.Vector3(); // world cs  
+
+      model.material.uniforms.uModelAlpha.value = 0.4;
+      model.material.uniforms.uModelAlphaClip.value = 0.4;
+      model.material.needsUpdate;
+      updateModel();
+
+    }
+  }
+
+  if ( event.current && data.selected ) {
+
+    // update plane normal depending on camera 
+    camera.getWorldDirection(data.plane.normal).projectOnPlane(data.direction).normalize();
+
+    // intersect ray and plane
+    gestures.raycasters.handRay[0].intersectPlane(data.plane, data.point); // world cs
+
+    // move screen depending on intersection
+    if ( data.point ) {
+
+      data.translation.subVectors(data.point, data.origin).projectOnVector(data.direction);
+      data.position.copy(data.position0).add(data.translation);
+
+      // move screen only if the new position is inside the container
+      if ( container.userData.obb.containsPoint(data.position) ) {
+
+        screen.position.copy( data.position );
+
+        updateScreen();
+      }
+    }
+  }
+
+  if ( event.end && data.selected ) {
+
+    display.attach(screen);
+    updateScreen();
+
+    model.material.uniforms.uModelAlpha.value = 1.0;
+    model.material.uniforms.uModelAlphaClip.value = 0.4;
+    model.material.needsUpdate;
+    updateModel();
+
+    data = {};
+
+
+  }
+}
+
+function rotateScreenMonitor ( event ) {
+
+  let data = event.userData;
+
+  if ( event.start ){
+
+    // get screen intersections with visible monitors
+    data.selected = intersectScreen( gestures.raycasters.handRay[0] )
+    .filter( (intersection) => intersection.object.material.uniforms.uPlaneVisible.value )[0];
+   
+    if ( data.selected ) {
+      
+      saveScreen( event );
+
+      scene.attach( screen ); // screen becomes a world object
+      updateScreen();
+
+      data.point = data.selected.point.clone(); // world cs
+      data.axis = positionToAxis( data.point ); // world cs
+
+      screen.getWorldPosition( _position ); // world cs
+      data.center = data.point.clone().sub( _position ).projectOnVector( data.axis ).add( _position ); // world cs  
+      data.plane = new THREE.Plane().setFromNormalAndCoplanarPoint( data.axis, data.center ); // world cs
+
+      data.pointer = data.point.clone().sub( data.center ); // world cs
+      data.reference = data.pointer.clone().normalize(); // world cs
+      data.orthogonal = data.reference.clone().applyAxisAngle( data.axis, Math.PI/2 ).normalize(); // world cs
+     
+      data.radius = new THREE.Vector2();
+      data.angle = 0;
+      data.quaternion0 = screen.quaternion.clone();
+      data.quaternion = new THREE.Quaternion(); 
+
+      model.material.uniforms.uModelAlpha.value = 0.4;
+      model.material.uniforms.uModelAlphaClip.value = 0.4;
+      model.material.needsUpdate;
+      updateModel();
+
+    }
+  } 
+
+  if ( event.current && data.selected ) {
+          
+    gestures.raycasters.handRay[0].intersectPlane( data.plane, data.point ); // world cs
+
+    if ( data.point ) {
+
+      data.pointer.copy( data.point ).sub( data.center ); // world cs
+      data.radius.set( data.pointer.dot( data.reference ), data.pointer.dot( data.orthogonal ) );
+
+      data.angle = ( data.radius.length() > 1e-2 ) ? Math.atan2( data.radius.y, data.radius.x ) : 0;   
+      
+      screen.quaternion.copy( data.quaternion0 );
+      screen.rotateOnWorldAxis( data.axis, data.angle ); 
+
+      updateScreen();          
+
+    }
+
+  } 
+  
+  if ( event.end ) {
+
+    display.attach( screen );    
+    
+    model.material.uniforms.uModelAlpha.value = 1.0;
+    model.material.uniforms.uModelAlphaClip.value = 0.4;
+    model.material.needsUpdate;
+    updateModel();
+
+    data = {};
+
+  } 
+
+}
+
+// brush gesture actions
 
 function editMask ( event ) {
 
@@ -2300,5 +2525,215 @@ function resizeBrush ( event ) {
     data = {};
 
   }
+
+}
+
+// selector gesture actions
+
+function moveSelectorVertex( event ) {
+
+  let data = event.userData;
+
+  if ( event.start ) {
+
+    data.selected = intersectSelectorVertices( gestures.raycasters.handRay[0] )[0];
+
+    if ( data.selected ) {
+
+      data.point = data.selected.point;
+      data.point0 = data.point.clone();
+
+      data.diagonal0 = data.point0.clone();
+      selector.worldToLocal( data.diagonal0 ).negate();
+  
+      data.plane = new THREE.Plane().setFromCoplanarPoints( data.point0, gestures.raycasters.viewRay.direction );
+  
+      data.scale = selector.scale.clone();
+      data.position = selector.position.clone();
+
+      data.size0 = selector.userData.size;
+      data.position0 = data.position.clone();
+      
+    }
+   
+  }
+
+  if ( event.current && data.selected.point ) {
+
+    camera.getWorldDirection( data.plane.normal );
+
+    gestures.raycasters.handRay[0].intersectPlane( data.plane, data.point ); // world cs
+
+    data.position.addVectors( data.point0, data.diagonal0 ).divideScalar( 2 );
+    data.scale.subVectors( data.point0, data.diagonal0 ).divide( data.size0 );
+
+    selector.scale.copy( data.scale );
+    selector.position.copy( data.position );
+
+    updateSelector();
+
+  }
+
+  if ( event.end ) {
+
+    data = {};
+
+  }
+
+}
+
+function moveSelectorFace( event ) {
+
+}
+
+// helpers
+
+function loadNIFTI ( file ) {
+  return new Promise((resolve, reject) => {
+    
+    if ( ! file ) reject("Error: No file selected");   
+    const reader  = new PIXPIPE.FileToArrayBufferReader();
+    reader.addInput(file);
+    reader.update();
+
+    reader.on("ready", function () {
+
+      const decoder = new PIXPIPE.Image3DGenericDecoder();  
+      decoder.addInput( this.getOutput() );
+      decoder.update();
+
+      if ( ! decoder.getOutput() ) reject("Error: File cannot be decoded");
+      const image3D = decoder.getOutput();
+      resolve( image3D );
+    });
+  });
+}
+
+function saveNIFTI ( file ) {
+
+  if (nifti.isCompressed(event.target.result)) {
+
+    fileDecompressed = nifti.decompress(event.target.result);
+
+  } else {
+
+    fileDecompressed = event.target.result;
+
+  }
+  
+  const niftiHeaderTmp = fileDecompressed.slice(0, 352);
+  const tmp = new Uint16Array(niftiHeaderTmp, 0, niftiHeaderTmp.length);
+  tmp[35] = 2;
+  const data = [tmp, new Uint16Array(masks.buffer, 0, masks.buffer.length)];
+  const fileName = "masks.nii";
+  saveData(data, fileName);
+
+}
+
+function saveData(data, fileName) {
+
+	const a = document.createElement("a");
+	document.body.appendChild(a);
+	const blob = new Blob(data);
+	const url = window.URL.createObjectURL(blob);
+	a.href = url;
+	a.download = fileName;
+	a.click();
+	window.URL.revokeObjectURL(url);
+
+}
+
+function projectBoxOnPlane ( box, plane ) {
+
+  _points[0].set(box.min.x, box.min.y, box.min.z);
+  _points[1].set(box.max.x, box.min.y, box.min.z);
+  _points[2].set(box.min.x, box.max.y, box.min.z);
+  _points[3].set(box.max.x, box.max.y, box.min.z);
+  _points[4].set(box.min.x, box.min.y, box.max.z);
+  _points[5].set(box.max.x, box.min.y, box.max.z);
+  _points[6].set(box.min.x, box.max.y, box.max.z);
+  _points[7].set(box.max.x, box.max.y, box.max.z);
+
+  _points.forEach( (point) => plane.projectPoint( point, point ) );
+
+  return _box.setFromPoints( _points );
+}
+
+function positionToSample ( position ) {
+  // convert position in display's local coordinates to voxel sample vector index
+
+  const samples = mask.userData.samples;
+  const voxel = mask.userData.voxelSize;
+  const center = new THREE.Vector3().copy( mask.userData.size ).divideScalar( 2 );
+
+  const indices = new THREE.Vector3(
+    Math.round( (position.x + center.x) / voxel.x ),
+    Math.round( (position.y + center.y) / voxel.y ),
+    Math.round( (position.z + center.z) / voxel.z ),
+  );
+
+  const minIndices = new THREE.Vector3();
+  const maxIndices = new THREE.Vector3().copy( samples ).subScalar( 1 );
+  indices.clamp( minIndices, maxIndices );
+
+  return indices;
+}
+
+function positionToAxis ( position ) {
+  // position in world coordinates
+
+  // compute the local screen vector of the position
+  const vector = position.clone();
+  screen.worldToLocal( vector );
+
+  // determine in which octant the vector lies
+  const octant = vector.toArray().map( (value) => Math.sign( value ) )
+  const indices = octant.map( sign => Math.floor( sign > 0) );
+
+  // compute the monitor lengths to the container
+  const monitorLengths = screen.userData.monitors.map( (monitor, i) => 
+      monitor.userData.axis.userData.points[indices[i]].length()
+  );
+
+  // normalize the local position vector to be inside the unit cube
+  const scale = new THREE.Vector3().fromArray( monitorLengths );
+  vector.divide( scale );
+
+  // compute the correlation of the vector with each axis
+  const axes = [ _right, _up, _forward ].map( (axis) => axis.clone() );
+  const correlation = axes.map( (axis) => 
+    Math.abs( _vector.copy( vector ).projectOnVector( axis ).length() )
+  );
+ 
+  // determine the closest axis to the vector
+  const index = correlation.indexOf( Math.max(...correlation) );
+  const axis = axes[ index ].multiplyScalar( octant[ index ] );
+  axis.transformDirection( screen.matrixWorld );
+
+  // return the axis in world coordinates
+  return axis;
+}
+
+function getVertices( geometry ) {
+
+  let vertices = new Array( geometry.attributes.position.count ).fill().map( () => new THREE.Vector3() );
+
+  // get geometry vertices
+  for ( let i = 0; i < geometry.attributes.position.count; i++ ) {
+
+    vertices[i].fromBufferAttribute( geometry.attributes.position, i );
+  
+  }
+
+  // remove duplicates
+  vertices = vertices.filter( (vector0, i) => {
+
+    // return ! vertices.slice( i + 1 ).some( (vector1) => vector1.equals(vector0) );
+    return ! vertices.slice( i + 1 ).some( (vector1) => vector1.distanceTo(vector0) < 1e-6 );
+
+
+  });
+
+  return vertices;
 
 }
