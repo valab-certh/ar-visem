@@ -1,37 +1,51 @@
 <!DOCTYPE html>
+
 <head>
+  
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>INCISIVE AR-TOOL</title>  
   
-  <link rel="stylesheet" type="text/css" href="css/styles.css">
+  <link rel="stylesheet" type="text/css" href="style.css">
 
 </head>
+
 <body>
 
-  <!-- ICNISIVE LOGO -->
+  <!-- INCISIVE Logo -->
+
   <nav>
     <a href="https://cordis.europa.eu/project/id/952179">
       <img alt="INCISIVE Cordis webpage" src="https://incisive-project.eu/wp-content/uploads/2021/01/incisive-header-logo.svg" height="20">
     </a> 
   </nav>
   
+  <!-- Upload Buttons -->
+
   <input type="file" id="uploadVolume" style="display:none"/>
   <input type="file" id="uploadMask" style="display:none"/>
   <div id="overlay-content"></div>
 
-  <script async src="https://unpkg.com/es-module-shims@1.8.0/dist/es-module-shims.js"></script>
+ 
+  <!-- Import Tree.js from CDN-->
+
   <script type="importmap">
     {
-        "imports": {
-        "three": "./node_modules/three/build/three.module.js",
-        "three/addons/": "./node_modules/three/examples/jsm/"
-        }
+      "imports": {
+        "three": "https://unpkg.com/three@0.161.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.161.0/examples/jsm/"
+      }
     }
   </script>
 
-  <script type="module" src="src/main.js"></script>
+  <!-- Import lil-gui from CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/lil-gui@0.19.1/dist/lil-gui.umd.min.js"></script>
+  <link href="https://cdn.jsdelivr.net/npm/lil-gui@0.19.1/dist/lil-gui.min.css" rel="stylesheet">
+  
+
+  <script type="module" src="script.js"></script>
 
 
 </body>
+
 </html>

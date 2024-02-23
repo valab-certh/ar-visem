@@ -1192,6 +1192,7 @@ class XRGestures extends THREE.EventDispatcher {
 
             this.detector[gesture].end = true;
             this.detector[gesture].current = false;
+            this.detector[gesture].userData = {};
 
         }
        
@@ -1204,7 +1205,8 @@ class XRGestures extends THREE.EventDispatcher {
             this.detector[gesture].start = false;
             this.detector[gesture].current = false;
             this.detector[gesture].end = false;
-
+            this.detector[gesture].userData = {};
+            
         }
 
         if ( gesture === this.detector.gesture ) this.detector.gesture = undefined;

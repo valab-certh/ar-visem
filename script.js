@@ -1,20 +1,342 @@
 import * as THREE from "three"
-import * as PIXPIPE from "../libs/pixpipe.esmodule.js"
-import { GUI } from "lil-gui"
+import * as PIXPIPE from "./prm/pixpipe.esmodule.js"
+import GUI from 'https://cdn.jsdelivr.net/npm/lil-gui@0.19/+esm';
 import { OrbitControls } from "three/addons/controls/OrbitControls.js"
-import { ARButton } from "three/examples/jsm/webxr/ARButton"
-import { XRGestures } from '../libs/XRGestures2D.js'
+import { ARButton } from 'three/addons/webxr/ARButton.js';
+import { XRGestures } from './prm/XRGestures.js'
 import { OBB } from 'three/addons/math/OBB.js'
-import Stats from 'three/examples/jsm/libs/stats.module'
-import vertexShader from '../shaders/vertex_screen.glsl'
-import fragmentShader from '../shaders/fragment_screen.glsl'
-import vertexShader3D from '../shaders/vertex_model.glsl'
-import fragmentShader3D from '../shaders/fragment_model.glsl'
 import { TransformControls } from 'three/addons/controls/TransformControls.js'
+
+
+// shaders
+
+const vertexScreen = `
+precision highp float;
+
+uniform mat4 uNormalize;
+
+out vec3 wPosition;
+out vec3 uPosition;
+
+void main() {
+
+  wPosition = vec3( modelMatrix * vec4( position, 1.0 ) );
+  uPosition = vec3( uNormalize * vec4( wPosition, 1.0 ) );
+  gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
+}
+`
+const fragmentScreen = `
+precision highp float;
+precision highp sampler3D;
+
+in vec3 uPosition; // position in display local normalized coordinates
+in vec3 wPosition; // position in world coordinates
+
+uniform sampler3D uVolumeMap;
+uniform sampler3D uMaskMap;
+
+// plane uniforms
+uniform vec3 uPlaneNormal[3];
+uniform vec3 uPlaneOrigin;
+uniform float uPlaneIndex;
+uniform float uPlaneVisible;
+uniform float uPlaneAlpha;
+
+// brush uniforms
+uniform float uBrushVisible;
+uniform vec3 uBrushColor;
+uniform float uBrushRadius;
+uniform vec3 uBrushCenter;
+
+// material uniforms
+uniform float uBrightness;
+uniform float uContrast;
+
+// #define epsilon 0.005
+
+out vec4 color;
+
+float getSample( sampler3D map, vec3 position ) {
+    vec3 uvw = position + 0.5;
+    return texture( map, uvw ).r;
+}
+
+float isBoundarySphere( vec3 wPoint, vec3 center, float radius, float thickness ) {
+    // in world coordinates
+    float distanceSq = dot( wPoint - center, wPoint - center );
+    float outerRadiusSq = radius * radius;
+    float innerRadiusSq = outerRadiusSq * (1.0 - thickness) * (1.0 - thickness);
+    return float( innerRadiusSq < distanceSq && distanceSq <= outerRadiusSq );
+}
+
+float isInsideUnitBox( vec3 uPoint ) {
+    // in display local normalized coordinates
+    const vec3 boxMax = vec3( 0.5 );
+    bvec3 inside = lessThanEqual( abs(uPoint), boxMax );
+    return float( all( inside ));
+}
+
+float isBoundaryUnitBox( vec3 uPoint, float thickness ) {
+    // in display local normalized coordinates
+    const vec3 boxMax = vec3( 0.5 ); 
+    vec3 difference = boxMax - abs(uPoint); 
+    bvec3 inside = lessThanEqual( abs(uPoint), boxMax );
+    bvec3 boundary = lessThan( abs(difference), vec3(thickness) );
+    return float(any(boundary) && all(inside));
+}
+
+float isInsideLine( vec3 uPoint, vec3 origin, vec3 direction, float thickness ) {
+    // in display local normalized coordinates
+    vec3 vector = uPoint - origin;
+    vec3 projection = dot(vector, direction) * direction;
+    vec3 difference = vector - projection;
+    return step( dot(difference, difference), thickness * thickness);
+}
+
+float isInsideAxis( vec3 uPoint, float thickness ) {
+    int i = int(mod( uPlaneIndex - 1.0, 3.0));
+    int j = int(mod( uPlaneIndex + 1.0, 3.0));
+    float isAxisI = isInsideLine( uPoint, uPlaneOrigin, uPlaneNormal[i], thickness );  
+    float isAxisJ = isInsideLine( uPoint, uPlaneOrigin, uPlaneNormal[j], thickness );  
+    return max( isAxisI, isAxisJ);
+}
+
+void main() {        
+    const float boundaryBox = 0.005;
+    const float boundarySphere = 0.025;
+    const float lineThickness = 0.002;
+    
+    float isInside = isInsideUnitBox( uPosition );
+    float isMask = float( getSample( uMaskMap, uPosition ) > 0.0 );
+    float isBrush = uBrushVisible * isBoundarySphere( wPosition, uBrushCenter, uBrushRadius, boundarySphere );
+    float isContainer = isBoundaryUnitBox( uPosition, boundaryBox );
+    float isAxis = isInsideAxis( uPosition, lineThickness );
+ 
+    vec4 volumeColor = vec4( vec3( getSample( uVolumeMap, uPosition )), uPlaneAlpha );
+    vec4 axisColor = vec4(volumeColor.rgb, 0.5 );
+    vec4 maskColor = vec4( volumeColor.r + 0.4, volumeColor.gb, 1.0 );
+    vec4 brushColor = vec4( uBrushColor, 1.0 );
+    vec4 containerColor = vec4( 1.0, 1.0, 1.0, 0.3 );
+
+    color = volumeColor;
+    color.rgb = (color.rgb - 0.5) * uContrast + 0.5 + uBrightness;   
+    color = mix( color, axisColor, isAxis );
+    color = mix( color, maskColor, isMask );
+    color = mix( color, brushColor, isBrush );
+    color = mix( color, containerColor, isContainer );
+    color = clamp( color, 0.0, 1.0 );    
+  
+    float isNotDiscarded = min( isInside, max( isContainer, uPlaneVisible ));
+    if ( isNotDiscarded == 0.0 ) discard;
+    // if ( isAxis == 1.0 ) discard;
+  
+}
+`
+const vertexModel = `
+precision highp float;
+
+uniform vec3 uCameraPosition;
+uniform vec3 uMaskSize;
+
+out vec3 uDisplacement;
+
+void main() {
+
+  // main code
+  gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
+
+  vec3 uPosition = position / uMaskSize;
+  uDisplacement = uPosition - uCameraPosition; 
+}
+`
+const fragmentModel = `
+precision highp float;
+precision highp sampler3D;
+
+in vec3 uDisplacement;
+
+// global uniforms
+uniform vec3 uCameraPosition;
+uniform mat4 uMatrix;
+
+// plane uniforms
+uniform vec4 uPlaneHessian[3];
+uniform bool uPlaneVisible[3];
+
+uniform sampler3D uMaskMap;
+uniform vec3 uTextelSize;
+uniform vec3 uBoxMin;
+uniform vec3 uBoxMax;
+
+// material uniforms
+uniform float uModelAlpha;
+uniform float uModelAlphaClip;
+
+out vec4 color;
+
+#define Inf 3.402823466e+38 // works for precision highp float;
+#define stepFactor 0.5
+
+float getSample( vec3 position ) {
+
+    vec3 uvw = position + 0.5;
+    return texture( uMaskMap, uvw ).r;
+
+}
+
+vec3 getNormal( vec3 position ) {
+
+    vec3 offset = uTextelSize;
+    vec3 deltaInv = 0.5 / offset;
+
+    vec3 gradient = vec3(
+        getSample(position + vec3(-offset.x, 0.0, 0.0)) - getSample(position + vec3(offset.x, 0.0, 0.0)),
+        getSample(position + vec3(0.0, -offset.y, 0.0)) - getSample(position + vec3(0.0, offset.y, 0.0)),
+        getSample(position + vec3(0.0, 0.0, -offset.z)) - getSample(position + vec3(0.0, 0.0, offset.z))
+    );
+    
+    gradient *= deltaInv;  
+
+    return normalize( gradient );
+
+}
+
+float getStep( vec3 dir ) {
+
+    vec3 tMax = uTextelSize / abs( dir ); 
+    float step = min( tMax.x, min( tMax.y, tMax.z ) );
+
+    return step * stepFactor;
+
+}
+
+bool isClipped( vec3 point ) {   
+
+    vec4 c = uMatrix * vec4(uCameraPosition, 1.0);
+    vec4 p = uMatrix * vec4(point, 1.0);
+
+    bvec3 sameSign = equal(sign(c.xyz), sign(p.xyz));
+    
+    sameSign.x = sameSign.x || ! uPlaneVisible[0];
+    sameSign.y = sameSign.y || ! uPlaneVisible[1];
+    sameSign.z = sameSign.z || ! uPlaneVisible[2];
+
+    return all(sameSign);
+
+}
+
+bool isInsideUnitBox( vec3 uPoint ) {
+
+    // in display local normalized coordinates
+    const vec3 boxMax = vec3( 0.5 );
+    bvec3 inside = lessThanEqual( abs(uPoint), boxMax );
+    
+    return all( inside );
+
+}
+
+vec2 intersectBox( vec3 boxMin, vec3 boxMax, vec3 origin, vec3 direction ) {
+    // Ray-AABB (Axis Aligned Bounding Box) intersection.
+    // Mathematics: https://tavianator.com/2022/ray_box_boundary.html
+
+    vec3 inv = 1.0 / direction;
+    vec3 dMax = (boxMax - origin) * inv;
+    vec3 dMin = (boxMin - origin) * inv;
+
+    vec3 tMin = min(dMin, dMax);
+    vec3 tMax = max(dMin, dMax);
+
+    float tStart = max(tMin.x, max(tMin.y, tMin.z));
+    float tEnd = min(tMax.x, min(tMax.y, tMax.z));
+
+    return vec2(tStart, tEnd);
+
+}
+
+float intersectPlane( vec3 origin, vec3 direction, vec4 plane, bool visible ) {
+
+    if ( !visible ) return Inf;
+
+    float correlation = - dot( plane.xyz, direction );
+    if ( abs(correlation) < 1e-6 ) return Inf;
+
+    float depth = ( dot( plane.xyz, origin ) + plane.w ) / correlation;
+    if ( depth < 0.0 ) return Inf;
+
+    vec3 point = origin + depth * direction;
+    if ( ! isInsideUnitBox(point) ) return Inf;
+
+    return depth;
+
+}
+
+float intersectScreen( vec3 origin, vec3 direction ) {
+
+    float depth = Inf;
+
+    depth = min( depth, intersectPlane(origin, direction, uPlaneHessian[0], uPlaneVisible[0]) );
+    depth = min( depth, intersectPlane(origin, direction, uPlaneHessian[1], uPlaneVisible[1]) );
+    depth = min( depth, intersectPlane(origin, direction, uPlaneHessian[2], uPlaneVisible[2]));
+ 
+    return depth;
+
+}
+
+vec2 rayMarch( vec3 origin, vec3 direction, vec2 bounds, float step ) {
+    // I sould discritize depth in order to avoid flickering
+
+    vec3 position = origin + bounds.x * direction;
+    float intensityPrev = getSample(position);
+    float intensity;
+    float difference;
+
+    for (; bounds.x < bounds.y; bounds.x += step) {
+
+        position += direction * step;
+        intensity = getSample(position);
+        difference = intensity - intensityPrev;
+        
+        if ( abs(difference) != 0.0 ) break;
+        intensityPrev = intensity;
+
+    }
+
+    intensity = ( difference > 0.0 ) ? intensity : intensityPrev;
+
+    return vec2(bounds.x, intensity);
+
+}
+
+void main(){
+
+    // compute ray parameters
+    vec3 direction = normalize( uDisplacement );
+    vec2 bounds = intersectBox( uBoxMin, uBoxMax, uCameraPosition, direction );
+
+    bounds.x = max(bounds.x, 0.0);
+    bounds.y = min(bounds.y, intersectScreen(uCameraPosition, direction));
+    if ( bounds.x > bounds.y ) {
+
+        discard;
+        return;
+
+    }
+
+    float step = getStep( direction );
+    vec2 result = rayMarch( uCameraPosition, direction, bounds, step );
+    if ( result.y > 0.0 ) {
+
+        // coloring
+        vec3 position = uCameraPosition + result.x * direction;      
+        color.rgb = 0.9 * (getNormal( position ) * 0.5 + 0.5);
+        color.a = isClipped(position) ? uModelAlphaClip : uModelAlpha;
+
+    }
+}
+`
 
 // place holder variables
 const _vector     = new THREE.Vector3();
-const _target     = new THREE.Vector3();
 const _position   = new THREE.Vector3();
 const _direction  = new THREE.Vector3();
 const _quaternion = new THREE.Quaternion();
@@ -26,7 +348,8 @@ const _points     = new Array( 8 ).fill().map( () => new THREE.Vector3() );
 
 
 // constants
-const _zero    = new THREE.Vector3( 0, 0, 0 );
+const _zeros    = new THREE.Vector3( 0, 0, 0 );
+const _ones     = new THREE.Vector3( 1, 1, 1 );
 const _right   = new THREE.Vector3( 1, 0, 0 );
 const _up      = new THREE.Vector3( 0, 1, 0 );
 const _forward = new THREE.Vector3( 0, 0, 1 );
@@ -36,9 +359,12 @@ const _blue    = new THREE.Color( 0, 0, 1 );
 
 
 // global objects
-let camera, scene, renderer, canvas, orbitControls, transformControls, stats; // scene objects
-let display, container, screen, model, brush, selector, volume, mask; // main objects
+let camera, scene, renderer, canvas, orbitControls, transformControls; // scene objects
+
+let display, container, screen, model, brush, volume, mask; // main objects
+
 let pointer, raycaster, gestures, reticle; // helper objects
+
 let hitTestSource, hitTestSourceRequested, hitTestResult; // parameters AR
 
 main();
@@ -61,7 +387,6 @@ function setupObjects () {
   container = new THREE.Mesh();
   model     = new THREE.Mesh();
   brush     = new THREE.Mesh();
-  selector  = new THREE.Mesh();
   reticle   = new THREE.Mesh();
   pointer   = new THREE.Vector2();
   raycaster = new THREE.Raycaster();
@@ -73,10 +398,12 @@ function setupObjects () {
 function setupScene() {
 
   // canvas setup
+
   canvas = document.createElement( 'div' );
   document.body.appendChild( canvas );
 
   // renderer setup
+
   renderer = new THREE.WebGLRenderer( { 
     alpha: true,
     antialias: false, 
@@ -88,30 +415,30 @@ function setupScene() {
   canvas.appendChild( renderer.domElement );
 
   // camera setup
+
   camera = new THREE.PerspectiveCamera( 50, window.innerWidth/window.innerHeight, 0.001, 10 );
   camera.position.set( 1, 0.6, 1 );   
   
   // orbit
+
   orbitControls = new OrbitControls( camera, canvas );
   orbitControls.target.set( 0, 0, 0 );
   orbitControls.update();
-  // orbitControls.addEventListener("change", () => updateDisplay() );
 
   // transform
+
   transformControls = new TransformControls( camera, canvas );
   transformControls.addEventListener( 'dragging-changed', (event) => orbitControls.enabled = !event.value); 
   transformControls.attach( screen );
   transformControls.visible = false;
-  transformControls.enabled = false;
-
-  // stats
-  stats = new Stats();
-  document.body.appendChild( stats.dom );    
+  transformControls.enabled = false;   
  
   // scene
+
   scene = new THREE.Scene();  
 
   // scene graph
+
   scene.add( camera )
   scene.add( display );
   scene.add( transformControls );
@@ -120,14 +447,15 @@ function setupScene() {
   display.add( screen );
   display.add( model );
   display.add( brush );
-  display.add( selector );
 
   setupDisplay();
 
   // render order
-  [reticle, screen, model, selector, brush, container,].forEach( (obj, i) => obj.renderOrder = i );
+
+  [ reticle, screen, model, brush, container, ].forEach( (obj, i) => obj.renderOrder = i );
 
   // event listeners
+
   window.addEventListener( 'resize', onResize );
   window.addEventListener( 'mousemove', onPointerMove);
   window.addEventListener( 'keydown', onKeydown );
@@ -141,6 +469,7 @@ function setupGui() {
   gui.domElement.classList.add( 'force-touch-styles' );
   
   // volume
+
   folders[0] = gui.addFolder( 'Volume' );  
 
   buttons[0] = document.getElementById( 'uploadVolume' ); 
@@ -148,6 +477,7 @@ function setupGui() {
   buttons[0].addEventListener( 'change', (event) => onVolumeUpload( event ) );  
     
   // maskS
+
   folders[1] = gui.addFolder('Mask');
 
   buttons[1] = document.getElementById('uploadMask'); 
@@ -161,13 +491,16 @@ function setupButton() {
 
   const overlay = document.getElementById( 'overlay-content' )
   const button = ARButton.createButton(renderer, {
+
     requiredFeatures: [ 'hit-test' ],
     optionalFeatures: [ 'dom-overlay' ],
-    domOverlay: { root: overlay },        
-  })   
+    domOverlay: { root: overlay },     
+
+  });
 
   document.body.appendChild( button );     
   button.addEventListener( 'click', onButton );
+
 }
 
 function updateAnimation( timestamp, frame ) {
@@ -181,7 +514,6 @@ function updateAnimation( timestamp, frame ) {
 
   }    
   
-  stats.update();
   updateDisplay();
 
   renderer.render( scene, camera );
@@ -195,6 +527,7 @@ function setupAR() {
 
   setupGestures();
   setupReticle();
+
   scene.add( reticle );
 
 }
@@ -203,9 +536,11 @@ function setupReticle() {
 
   const geometry = new THREE.RingGeometry( 0.15, 0.2, 32 ).rotateX( -Math.PI / 2 );
   const material = new THREE.MeshBasicMaterial({ 
+
     color: 0xffffff,
     transparent: true,
     opacity: 0.7,
+
   });
 
   reticle.geometry = geometry;
@@ -213,6 +548,7 @@ function setupReticle() {
   reticle.matrixAutoUpdate = false;   
 
   reticle.userData.enabled = true;
+
 }
 
 function setupGestures() {
@@ -249,12 +585,14 @@ function updateHitTest( renderer, frame, onHitTestResultReady, onHitTestResultEm
     });
   
     hitTestSourceRequested = true;
+
   }
 
   //get hit test results
   if ( hitTestSource ) {
 
     const hitTestResults = frame.getHitTestResults( hitTestSource ); 
+
     if ( hitTestResults.length ) {
 
       hitTestResult = hitTestResults[0]; //console.log(hitTestResult);
@@ -262,10 +600,13 @@ function updateHitTest( renderer, frame, onHitTestResultReady, onHitTestResultEm
 
         const hitPose = hitTestResult.getPose( referenceSpace );
         if ( hitPose ) onHitTestResultReady( hitPose.transform.matrix );
+
       }
 
     } else onHitTestResultEmpty();
-  };
+
+  }
+
 }
 
   
@@ -275,7 +616,7 @@ function setupDisplay() {
 
   display.visible = false;
   display.matrixAutoUpdate = false;
-  display.userData.modes = [ 'Place', 'Inspect', 'Segment', 'Edit',  ];
+  display.userData.modes = [ 'Place', 'Inspect', 'Edit',  ];
   display.userData.history = [];
   display.userData.future = [];
 
@@ -286,8 +627,9 @@ function setupDisplay() {
   setupScreen();
   setupBrush();
   setupModel();
-  setupSelector();
+
   updateUI(); 
+
 }
 
 function updateDisplay() {
@@ -298,16 +640,17 @@ function updateDisplay() {
   updateScreen();
   updateUniforms();
 
-  if ( model.visible) updateModel();  
-
-  if ( selector.visible ) {
-
-    updateSelector();
-    console.log( intersectSelectorVertices( gestures.raycasters.handRay[0] )[0] );
+  if ( model.visible) {
+    
+    updateModel();  
 
   }
 
-  if ( brush.visible ) updateBrush();
+  if ( brush.visible ) {
+
+    updateBrush();
+
+  } 
 
 
 
@@ -328,15 +671,25 @@ function setupUniforms() {
 function updateUniforms() {
 
   display.userData.uNormalize.copy( display.matrixWorld ).scale( volume.userData.size ).invert();
+  
   display.userData.uDeNormalize.copy( display.matrixWorld ).scale( volume.userData.size ).transpose();
+  
   display.userData.uMatrix.copy( screen.matrix ).invert().scale( volume.userData.size );
+  
   display.userData.uCameraPosition.copy( camera.position ).applyMatrix4( display.userData.uNormalize );
+  
   display.userData.uPlaneOrigin.copy( screen.getWorldPosition( new THREE.Vector3() ) ).applyMatrix4( display.userData.uNormalize );
+  
   display.userData.uPlaneNormal.forEach( (planeNormal, i) => {
+
     planeNormal.copy( screen.userData.planes[i].normal ).transformDirection( display.userData.uNormalize );
+  
   });
+
   display.userData.uPlaneHessian.forEach( (planeHessian, i) => {
+
     planeHessian.set( ...screen.userData.planes[i].normal.toArray(), screen.userData.planes[i].constant ).applyMatrix4( display.userData.uDeNormalize );
+  
   });
 
 }
@@ -352,18 +705,19 @@ function updateUI() {
     model.material.uniforms.uModelAlpha.value = 1.0;
     model.material.uniforms.uModelAlphaClip.value = 1.0;
 
-    selector.visible = false;
-
     brush.visible = false;
 
-    screen.userData.center.visible = false;
     screen.userData.monitors.forEach( (monitor) => {
+
       monitor.renderOrder = 1.0;
+      monitor.visible = true;
 
       const uniforms = monitor.material.uniforms;
       uniforms.uPlaneAlpha.value = 1.0;     
       uniforms.uBrushVisible.value = false;
+
     });  
+
   }
 
   if ( display.userData.modes[0] === 'Inspect' ) {
@@ -375,18 +729,19 @@ function updateUI() {
     model.material.uniforms.uModelAlpha.value = 1.0;
     model.material.uniforms.uModelAlphaClip.value = 0.4;
    
-    selector.visible = false;
-
     brush.visible = false;
 
-    screen.userData.center.visible = true;
     screen.userData.monitors.forEach( (monitor) => {
+
       monitor.renderOrder = 1.0;
+      monitor.visible = true;
 
       const uniforms = monitor.material.uniforms;
       uniforms.uPlaneAlpha.value = 1.0;     
       uniforms.uBrushVisible.value = false;
+
     });  
+
   }
 
   if ( display.userData.modes[0] === 'Edit' ) {
@@ -398,50 +753,22 @@ function updateUI() {
     model.material.uniforms.uModelAlpha.value = 0.0;
     model.material.uniforms.uModelAlphaClip.value = 0.0;
 
-    selector.visible = false;
-
     brush.visible = true;
   
-    screen.userData.center.visible = false;
     screen.userData.monitors.forEach( (monitor) => {  
 
       const isSelected = ( monitor.userData.index === brush.userData.monitorIndex );   
 
       monitor.renderOrder = isSelected ? 1.5 : 1.0;
+      monitor.visible = true;
 
       const uniforms = monitor.material.uniforms;
-      uniforms.uPlaneAlpha.value = isSelected ? 1.0 : 0.6; 
+      uniforms.uPlaneAlpha.value = isSelected ? 1.0 : 0.6;
       uniforms.uBrushVisible.value = true;   
 
     });  
+
   }
-
-  if ( display.userData.modes[0] === 'Segment' ) {
-
-    container.material.opacity = 0.0;   
-    container.userData.outline.visible = false;
-
-    model.visible = true;
-    model.material.uniforms.uModelAlpha.value = 0.4;
-    model.material.uniforms.uModelAlphaClip.value = 0.4;
-
-    selector.visible = true;
-
-    brush.visible = false;
-
-    screen.userData.center.visible = false;
-    screen.userData.monitors.forEach( (monitor) => {
-
-      monitor.renderOrder = 1.0;
-
-      const uniforms = monitor.material.uniforms;
-      uniforms.uPlaneAlpha.value = 1.0;     
-      uniforms.uBrushVisible.value = false;
-
-    });  
-  }
-
-
   
 }
 
@@ -466,6 +793,7 @@ function setupVolume () {
   volume.userData.size = size;
   volume.userData.samples = samples;
   volume.userData.voxelSize = voxelSize;
+  
 }
 
 function updateVolume ( image3D ) { 
@@ -503,7 +831,8 @@ function updateVolume ( image3D ) {
     const uniforms = monitor.material.uniforms;
     uniforms.uVolumeMap.value = texture;
     uniforms.uVolumeSize.value = size;
-  })
+  });
+
 }
 
 // mask
@@ -693,8 +1022,8 @@ function setupScreen () {
 
     // shader parameters
     uniforms: THREE.UniformsUtils.clone( uniforms ) ,
-    vertexShader: vertexShader,
-    fragmentShader: fragmentShader,
+    vertexShader: vertexScreen,
+    fragmentShader: fragmentScreen,
 
     // material parameters
     side: THREE.DoubleSide,
@@ -916,8 +1245,8 @@ function setupModel () {
 
     // // shader parameters
     uniforms: uniforms,
-    vertexShader: vertexShader3D,
-    fragmentShader: fragmentShader3D,
+    vertexShader: vertexModel,
+    fragmentShader: fragmentModel,
 
     // material parameters
     side: THREE.BackSide,
@@ -980,8 +1309,8 @@ function computeBoundingBoxModel () {
     }
   }
 
-  min.sub( voxel ).sub( voxel ); 
-  max.add( voxel ).add( voxel );
+  min.sub( voxel ); 
+  max.add( voxel );
   const box = new THREE.Box3( min, max );
   model.userData.box = box;
 
@@ -1062,281 +1391,6 @@ function updateBrush() {
   })
 
 }
-
-// selector 
-
-function setupSelector () {
-  
-  selector.clear();
-
-  const offset = volume.userData.size.length() *  0.00001;
-  selector.userData.size = volume.userData.size.clone().divideScalar( 2 ).addScalar( offset );
-  
-  selector.geometry = new THREE.BoxGeometry( ...selector.userData.size.toArray() );
-  selector.material = new THREE.MeshBasicMaterial( { 
-
-    color: 0x0055ff, 
-    side: THREE.DoubleSide, 
-    visible: true, 
-    transparent: true,
-    opacity: 0.2,
-    depthTest: true,
-    depthWrite: true,
-
-  });
-  
-  setupSelectorObb();
-  setupSelectorVertices();
-  setupSelectorFaces();
-
-}
-
-function setupSelectorObb () {
-
-  selector.geometry.computeBoundingBox();
-  
-  selector.userData.obb = new OBB().fromBox3( selector.geometry.boundingBox );
-  selector.userData.obb0 = selector.userData.obb.clone();
-  selector.userData.outline = new THREE.Box3Helper( selector.geometry.boundingBox, selector.material.color );
-
-  selector.add( selector.userData.outline );  
-
-}
-
-function setupSelectorVertices () {
-   
-  // compute vertices positions
-
-  const halfSize = selector.userData.obb.halfSize.clone();
-  const positions = new Array( 8 ).fill();
-
-  positions[0] = new THREE.Vector3(  halfSize.x,  halfSize.y,  halfSize.z );
-  positions[1] = new THREE.Vector3(  halfSize.x,  halfSize.y, -halfSize.z );
-  positions[2] = new THREE.Vector3(  halfSize.x, -halfSize.y,  halfSize.z );
-  positions[3] = new THREE.Vector3(  halfSize.x, -halfSize.y, -halfSize.z );
-  positions[4] = new THREE.Vector3( -halfSize.x,  halfSize.y,  halfSize.z );
-  positions[5] = new THREE.Vector3( -halfSize.x,  halfSize.y, -halfSize.z );
-  positions[6] = new THREE.Vector3( -halfSize.x, -halfSize.y,  halfSize.z );
-  positions[7] = new THREE.Vector3( -halfSize.x, -halfSize.y, -halfSize.z );
-
-  // add meshed to vertices
-
-  const radius = selector.userData.obb.halfSize.length() * 0.07;
-  const geometry = new THREE.SphereGeometry( radius );
-  const material = selector.material.clone();
-  
-  material.transparent = false;
-
-  selector.userData.vertices = new Array( positions.length ).fill();
-
-  for ( let i = 0; i < positions.length; i++ ) {
-
-    selector.userData.vertices[i] = new THREE.Mesh( geometry, material ); 
-    selector.userData.vertices[i].position.copy( positions[i] );
-
-    selector.userData.vertices[i].userData.sphere = new THREE.Sphere( new THREE.Vector3(), radius );
-    selector.userData.vertices[i].userData.sphere0 = selector.userData.vertices[i].userData.sphere.clone();
-
-    selector.add( selector.userData.vertices[i] );
-
-  }
-
-}
-
-function setupSelectorFaces () {
-
-  const halfSize = selector.userData.obb.halfSize.clone();
-  
-  selector.userData.faces = new Array( 6 ).fill();
-
-  selector.userData.faces[0] = new THREE.Plane( new THREE.Vector3(  1,  0,  0 ), halfSize.x );
-  selector.userData.faces[1] = new THREE.Plane( new THREE.Vector3( -1,  0,  0 ), halfSize.x );
-  selector.userData.faces[2] = new THREE.Plane( new THREE.Vector3(  0,  1,  0 ), halfSize.y );
-  selector.userData.faces[3] = new THREE.Plane( new THREE.Vector3(  0, -1,  0 ), halfSize.y );
-  selector.userData.faces[4] = new THREE.Plane( new THREE.Vector3(  0,  0,  1 ), halfSize.z );
-  selector.userData.faces[5] = new THREE.Plane( new THREE.Vector3(  0,  0, -1 ), halfSize.z );
-
-  selector.userData.faces0 = selector.userData.faces.map( (face) => face.clone() );
-
-}
-
-function updateSelector () {
-
-  updateSelectorObb();
-  updateSelectorVertices();
-  updateSelectorFaces();
-
-}
-
-function updateSelectorObb () {
-
-  selector.userData.obb.copy( selector.userData.obb0 ).applyMatrix4( selector.matrixWorld );
-
-}
-
-function updateSelectorVertices () {
-
-  let vertex;
-
-  for ( let i = 0; i < selector.userData.vertices.length; i++ ) {
-
-    vertex = selector.userData.vertices[i];
-    vertex.userData.sphere.copy( vertex.userData.sphere0 ).applyMatrix4( vertex.matrixWorld );
-
-  }
-
-}
-
-function updateSelectorFaces () {
-
-  for ( let i = 0; i < selector.userData.faces.length; i++ ) {    
-    
-    selector.userData.faces[i].copy( selector.userData.faces0[i] ).applyMatrix4( selector.matrixWorld );
-
-  }
-
-}
-
-function intersectSelector ( rayOrOrigin, direction ) {
-
-  if ( rayOrOrigin instanceof THREE.Ray && direction === undefined ) {
-
-    raycaster.set( rayOrOrigin.origin, rayOrOrigin.direction );
-
-  } else {
-
-    raycaster.set( rayOrOrigin, direction );
-
-  }
-
-  let intersections = raycaster.intersectObject( selector, false );
-
-  // remove duplicates
-
-  intersections = intersections.filter( (intersection0, i) => {
-
-    return ! intersections.slice( i + 1 ).some( (intersection1) => Math.abs( intersection1.distance - intersection0.distance ) < 1e-6 );
-
-  });
-
-  return intersections;
-
-}
-
-function intersectSelectorVertices ( rayOrOrigin, direction ) {
-
-  if ( rayOrOrigin instanceof THREE.Ray && direction === undefined ) {
-
-    raycaster.set( rayOrOrigin.origin, rayOrOrigin.direction );
-
-  } else {
-
-    raycaster.set( rayOrOrigin, direction );
-
-  }
-
-  // get ray intersection with vertex sphere
-
-  let indices = [];
-  let points = [];  
-
-  for ( let i = 0; i < selector.userData.vertices.length; i++ ) {
-
-    let vertex = selector.userData.vertices[i];
-
-    points.push( raycaster.ray.intersectSphere( vertex.userData.sphere, _position ) );
-
-    indices.push( i );
-
-  }
-
-  // sort intersections based on distance from camera
-
-  indices = indices.filter( (i) => points[i] instanceof THREE.Vector3 );
-
-  let distance = [];
-
-  for ( let i = 0; i < indices.length; i++ ) {
-    
-    let n = indices[i];
-
-    distance.push( points[n].distanceTo( raycaster.ray.origin ) );
-
-  }
-
-  indices.sort( (i, j) => distance[i] - distance[j] );
-
-  // create intersection object
-
-  let intersections = [];
-
-  for ( let i = 0; i < indices.length; i++ ) {
-
-    let n = indices[i];
-
-    intersections.push( {
-  
-      object: selector.userData.vertices[n],
-      point: points[n],
-      distance: distance[n],
-  
-    } );
-
-  } 
- 
-  return intersections;
-
-}
-
-function intersectSelectorFaces ( rayOrOrigin, direction ) {
-
- 
-  if ( rayOrOrigin instanceof THREE.Ray && direction === undefined ) {
-
-    raycaster.set( rayOrOrigin.origin, rayOrOrigin.direction );
-
-  } else {
-
-    raycaster.set( rayOrOrigin, direction );
-
-  }
-
-  // get ray intersection with vertex sphere
-
-  let indices = new Array( selector.userData.faces.length ).fill();
-  
-  let points = new Array( selector.userData.faces.length ).fill();
-
-  for ( let i = 0; i < selector.userData.faces.length; i++ ) {
-
-    indices[i] = i;
-
-    raycaster.ray.intersectPlane( vertex.userData.faces[i], points[i] );
-
-  }
-
-  // sort intersections based on distance from camera
-
-  indices = indices.filter( (i) => points[i] instanceof THREE.Vector3 );
-  indices = indices.filter( (i) => selector.userData.obb.containsPoint( points[i] ) );
-
-  indices.sort( (i, j) => points[i].distanceTo( raycaster.ray.origin ) - points[j].distanceTo( raycaster.ray.origin ) );
-
-
-  // create intersection object
-
-  let n = indices[0];
-
-  let intersection = {
-    
-    object: selector.userData.faces[n],
-    point: points[n],
-
-  }
-
-  return intersection;
-
-}
  
 // events
 
@@ -1349,7 +1403,6 @@ function onVolumeUpload ( event ) {
     setupContainer(); 
     setupScreen();
     setupModel();
-    setupSelector();
 
     updateDisplay();
     updateUI();
@@ -1475,7 +1528,6 @@ function onPolytap ( event ) {
     if ( display.userData.modes[0] === 'Place' ) placeDisplay( event );
     if ( display.userData.modes[0] === 'Inspect' ) hideScreenMonitor( event );
     if ( display.userData.modes[0] === 'Edit' ) toggleBrush( event );
-    if ( display.userData.modes[0] === 'Segment' ) ;
 
   }
 
@@ -1493,8 +1545,6 @@ function onSwipe ( event ) {
     if ( display.userData.modes[0] === 'Place'   ) undoDisplay( event );
     if ( display.userData.modes[0] === 'Inspect' ) undoScreen( event );
     if ( display.userData.modes[0] === 'Edit'    ) undoMask( event );
-    if ( display.userData.modes[0] === 'Segment' ) ;
-
 
   }
 
@@ -1503,8 +1553,6 @@ function onSwipe ( event ) {
     if ( display.userData.modes[0] === 'Place'   ) redoDisplay( event );
     if ( display.userData.modes[0] === 'Inspect' ) redoScreen( event );
     if ( display.userData.modes[0] === 'Edit'    ) redoMask( event );
-    if ( display.userData.modes[0] === 'Segment' ) ;
-
     
   }
 
@@ -1529,7 +1577,6 @@ function onHold ( event ) {
 
   }
   if ( display.userData.modes[0] === 'Edit'    ) editMask( event );
-  if ( display.userData.modes[0] === 'Segment' ) ;
 
 }
 
@@ -1540,7 +1587,6 @@ function onPan ( event ) {
   if ( display.userData.modes[0] === 'Place'   ) rotateDisplay( event );
   if ( display.userData.modes[0] === 'Inspect' ) rotateScreenMonitor( event );
   if ( display.userData.modes[0] === 'Edit'    ) ;
-  if ( display.userData.modes[0] === 'Segment' ) ; //moveSelectorVertex( event );
 
 
 }
@@ -1552,7 +1598,6 @@ function onPinch ( event ) {
   if ( display.userData.modes[0] === 'Place') resizeDisplay( event );
   if ( display.userData.modes[0] === 'Inspect') resizeDisplay( event );
   if ( display.userData.modes[0] === 'Edit') resizeBrush( event );
-  if ( display.userData.modes[0] === 'Segment' ) ;
 
 } 
 
@@ -1563,7 +1608,6 @@ function onTwist ( event ) {
   if ( display.userData.modes[0] === 'Place') rollDisplay( event );
   if ( display.userData.modes[0] === 'Inspect') rollScreen( event );
   if ( display.userData.modes[0] === 'Edit') contrastScreen( event );
-  if ( display.userData.modes[0] === 'Segment' ) ;
 
 }
   
@@ -1578,7 +1622,6 @@ function onImplode ( event ) {
   if ( display.userData.modes[0] === 'Place') resetDisplay( event );
   if ( display.userData.modes[0] === 'Inspect') resetScreen( event );
   if ( display.userData.modes[0] === 'Edit') resetMask( event );
-  if ( display.userData.modes[0] === 'Segment' ) ;
 
 }
 
@@ -1709,10 +1752,10 @@ function resizeDisplay ( event ) {
 
   if ( event.start ) {
 
-    data.plane = new THREE.Plane().setFromNormalAndCoplanarPoint( camera.getWorldDirection( _direction ), display.getWorldPosition( _position ) ); // world cs
+    data.hitPlane = new THREE.Plane().setFromNormalAndCoplanarPoint( camera.getWorldDirection( _direction ), display.getWorldPosition( _position ) ); // world cs
     data.points = [ 0, 1 ].map( () => new THREE.Vector3() ); // world cs
 
-    gestures.raycasters.handRay.forEach( (ray, i) => ray.intersectPlane( data.plane, data.points[i] ) );
+    gestures.raycasters.handRay.forEach( (ray, i) => ray.intersectPlane( data.hitPlane, data.points[i] ) );
 
     if ( data.points.every( Boolean ) ) {
 
@@ -1728,8 +1771,8 @@ function resizeDisplay ( event ) {
 
   if ( event.current ) {
     
-    camera.getWorldDirection( data.plane.normal );
-    gestures.raycasters.handRay.forEach( (ray, i) => ray.intersectPlane( data.plane, data.points[i] ) );
+    camera.getWorldDirection( data.hitPlane.normal );
+    gestures.raycasters.handRay.forEach( (ray, i) => ray.intersectPlane( data.hitPlane, data.points[i] ) );
 
     if ( data.points.every( Boolean ) ) {
 
@@ -1758,10 +1801,10 @@ function rollDisplay ( event ) {
   if ( event.start ) {
 
     data.origin = display.getWorldPosition( new THREE.Vector3() );
-    data.plane = new THREE.Plane().setFromNormalAndCoplanarPoint( camera.getWorldDirection( _direction ), data.origin ); // world cs
+    data.hitPlane = new THREE.Plane().setFromNormalAndCoplanarPoint( camera.getWorldDirection( _direction ), data.origin ); // world cs
     data.points = [ 0, 1 ].map( () => new THREE.Vector3() ); // world cs
     
-    gestures.raycasters.handRay.forEach( (ray, i) => ray.intersectPlane( data.plane, data.points[i] ) );
+    gestures.raycasters.handRay.forEach( (ray, i) => ray.intersectPlane( data.hitPlane, data.points[i] ) );
 
     if ( data.points.every( Boolean ) ) {
 
@@ -1774,13 +1817,13 @@ function rollDisplay ( event ) {
 
   if ( event.current ) {
     
-    camera.getWorldDirection( data.plane.normal );
-    gestures.raycasters.handRay.forEach( (ray, i) => ray.intersectPlane( data.plane, data.points[i] ) );
+    camera.getWorldDirection( data.hitPlane.normal );
+    gestures.raycasters.handRay.forEach( (ray, i) => ray.intersectPlane( data.hitPlane, data.points[i] ) );
 
     if ( data.points.every( Boolean ) ) {      
 
       display.quaternion.copy( data.quaternion0 );
-      display.rotateOnWorldAxis(  data.plane.normal, - gestures.parametersDual.angleOffset * Math.PI/180);
+      display.rotateOnWorldAxis(  data.hitPlane.normal, - gestures.parametersDual.angleOffset * Math.PI/180);
 
       updateDisplay();
 
@@ -1914,10 +1957,10 @@ function rollScreen ( event ) {
     camera.getWorldDirection( _direction );
     screen.getWorldPosition( _position );
 
-    data.plane = new THREE.Plane().setFromNormalAndCoplanarPoint( _direction, _position ); // world cs
+    data.hitPlane = new THREE.Plane().setFromNormalAndCoplanarPoint( _direction, _position ); // world cs
     data.points = [ 0, 1 ].map( () => new THREE.Vector3() ); // world cs    
   
-    gestures.raycasters.handRay.forEach( (ray, i) => ray.intersectPlane( data.plane, data.points[i] ) );
+    gestures.raycasters.handRay.forEach( (ray, i) => ray.intersectPlane( data.hitPlane, data.points[i] ) );
 
     if ( data.points.every( Boolean ) ) {
 
@@ -1933,13 +1976,13 @@ function rollScreen ( event ) {
 
   if ( event.current ) {
 
-    camera.getWorldDirection( data.plane.normal );        
-    gestures.raycasters.handRay.forEach( (ray, i) => ray.intersectPlane( data.plane, data.points[i] ) );
+    camera.getWorldDirection( data.hitPlane.normal );        
+    gestures.raycasters.handRay.forEach( (ray, i) => ray.intersectPlane( data.hitPlane, data.points[i] ) );
 
     if ( data.points.every( Boolean ) ) {      
 
       screen.quaternion.copy( data.quaternion0 );
-      screen.rotateOnWorldAxis( data.plane.normal, - gestures.parametersDual.angleOffset * Math.PI / 180 );
+      screen.rotateOnWorldAxis( data.hitPlane.normal, - gestures.parametersDual.angleOffset * Math.PI / 180 );
 
       updateDisplay();
 
@@ -1974,7 +2017,7 @@ function contrastScreen ( event ) {
 
     screen.userData.monitors.forEach( (monitor, i) => {
 
-      monitor.material.uniforms.uContrast.value = data.contrast0[i] - 7 * gestures.parameter[0].angleOffset / 360;
+      monitor.material.uniforms.uContrast.value = data.contrast0[i] - 7 * gestures.parametersDual.angleOffset / 360;
       monitor.material.needsUpdate = true;
 
     });
@@ -2111,7 +2154,7 @@ function moveScreenMonitor (event) {
 
       const normal = camera.getWorldDirection( _direction ).projectOnPlane( data.direction ).normalize();
       data.origin = data.selected.point.clone(); // world cs
-      data.plane = new THREE.Plane().setFromNormalAndCoplanarPoint(normal, data.origin); // world cs
+      data.hitPlane = new THREE.Plane().setFromNormalAndCoplanarPoint(normal, data.origin); // world cs
       data.point = new THREE.Vector3(); // world cs  
 
       model.material.uniforms.uModelAlpha.value = 0.4;
@@ -2125,10 +2168,10 @@ function moveScreenMonitor (event) {
   if ( event.current && data.selected ) {
 
     // update plane normal depending on camera 
-    camera.getWorldDirection(data.plane.normal).projectOnPlane(data.direction).normalize();
+    camera.getWorldDirection(data.hitPlane.normal).projectOnPlane(data.direction).normalize();
 
     // intersect ray and plane
-    gestures.raycasters.handRay[0].intersectPlane(data.plane, data.point); // world cs
+    gestures.raycasters.handRay[0].intersectPlane(data.hitPlane, data.point); // world cs
 
     // move screen depending on intersection
     if ( data.point ) {
@@ -2184,7 +2227,7 @@ function rotateScreenMonitor ( event ) {
 
       screen.getWorldPosition( _position ); // world cs
       data.center = data.point.clone().sub( _position ).projectOnVector( data.axis ).add( _position ); // world cs  
-      data.plane = new THREE.Plane().setFromNormalAndCoplanarPoint( data.axis, data.center ); // world cs
+      data.hitPlane = new THREE.Plane().setFromNormalAndCoplanarPoint( data.axis, data.center ); // world cs
 
       data.pointer = data.point.clone().sub( data.center ); // world cs
       data.reference = data.pointer.clone().normalize(); // world cs
@@ -2205,7 +2248,7 @@ function rotateScreenMonitor ( event ) {
 
   if ( event.current && data.selected ) {
           
-    gestures.raycasters.handRay[0].intersectPlane( data.plane, data.point ); // world cs
+    gestures.raycasters.handRay[0].intersectPlane( data.hitPlane, data.point ); // world cs
 
     if ( data.point ) {
 
@@ -2488,10 +2531,10 @@ function resizeBrush ( event ) {
     camera.getWorldDirection( _direction );
     screen.getWorldPosition( _position );
 
-    data.plane = new THREE.Plane().setFromNormalAndCoplanarPoint( _direction, _position ); // world cs
+    data.hitPlane = new THREE.Plane().setFromNormalAndCoplanarPoint( _direction, _position ); // world cs
     data.points = [ 0, 1 ].map( () => new THREE.Vector3() ); // world cs  
     
-    gestures.raycasters.handRay.forEach( (ray, i) => ray.intersectPlane( data.plane, data.points[i] ) );
+    gestures.raycasters.handRay.forEach( (ray, i) => ray.intersectPlane( data.hitPlane, data.points[i] ) );
 
     if ( data.points.every( Boolean ) ) {
 
@@ -2506,8 +2549,8 @@ function resizeBrush ( event ) {
 
   if ( event.current ) {
 
-    camera.getWorldDirection( data.plane.normal );        
-    gestures.raycasters.handRay.forEach( (ray, i) => ray.intersectPlane( data.plane, data.points[i] ) );
+    camera.getWorldDirection( data.hitPlane.normal );        
+    gestures.raycasters.handRay.forEach( (ray, i) => ray.intersectPlane( data.hitPlane, data.points[i] ) );
 
     if ( data.points.every( Boolean ) ) {
 
@@ -2525,64 +2568,6 @@ function resizeBrush ( event ) {
     data = {};
 
   }
-
-}
-
-// selector gesture actions
-
-function moveSelectorVertex( event ) {
-
-  let data = event.userData;
-
-  if ( event.start ) {
-
-    data.selected = intersectSelectorVertices( gestures.raycasters.handRay[0] )[0];
-
-    if ( data.selected ) {
-
-      data.point = data.selected.point;
-      data.point0 = data.point.clone();
-
-      data.diagonal0 = data.point0.clone();
-      selector.worldToLocal( data.diagonal0 ).negate();
-  
-      data.plane = new THREE.Plane().setFromCoplanarPoints( data.point0, gestures.raycasters.viewRay.direction );
-  
-      data.scale = selector.scale.clone();
-      data.position = selector.position.clone();
-
-      data.size0 = selector.userData.size;
-      data.position0 = data.position.clone();
-      
-    }
-   
-  }
-
-  if ( event.current && data.selected.point ) {
-
-    camera.getWorldDirection( data.plane.normal );
-
-    gestures.raycasters.handRay[0].intersectPlane( data.plane, data.point ); // world cs
-
-    data.position.addVectors( data.point0, data.diagonal0 ).divideScalar( 2 );
-    data.scale.subVectors( data.point0, data.diagonal0 ).divide( data.size0 );
-
-    selector.scale.copy( data.scale );
-    selector.position.copy( data.position );
-
-    updateSelector();
-
-  }
-
-  if ( event.end ) {
-
-    data = {};
-
-  }
-
-}
-
-function moveSelectorFace( event ) {
 
 }
 
@@ -2736,4 +2721,16 @@ function getVertices( geometry ) {
 
   return vertices;
 
+}
+
+function applyComponentwise( vector, f ) {
+
+  vector.set(
+
+    f( vector.x ),
+    f( vector.y ),
+    f( vector.z ),
+    
+  )
+  
 }
