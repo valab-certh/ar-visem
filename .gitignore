@@ -4,4 +4,4 @@
 # ignore all directories with these names
 node_modules/
 data/
-/tmp
+docs/tmp
