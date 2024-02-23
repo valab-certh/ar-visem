@@ -1,11 +1,31 @@
-[→VIDEO HERE←](https://youtu.be/qjNuVnkR1V0)
-![](images/capture.png)
 
-Uses [Pixpipe.js](https://github.com/jonathanlurie/pixpipejs) and [ThreeJS](https://threejs.org/) to build and display a 3D texture of MRI neuro imaging. Then gives the possibility to display a MNIobj mesh on top of it and play with opacity.  
-You can perform obliques.
+# Augmented Reality Tool
 
-This is not an end but rather some WebGL experiment.
+https://pbizopoulos.github.io/augmented-reality-tool
 
-Use the data in the `data` folder:
-- `prefix_001_t1_final.mnc` : the volume file to load first
-- `prefix_001_gray_surface.obj` : the mesh file to load then
+This is the repository for the Augmented Reality tool created in the context of the INCISIVE project.
+
+
+
+## Installation
+This is an istallation process of downloading and setting up an augmented reality tool.
+### Requirements
+
+- POSIX Shell & Utilities
+- Git
+- Docker
+
+### Download
+```bash
+  git clone https://github.com/XaralampidisBasilis/INCISIVE-AR-TOOL.git 
+  cd <project folder>/<cloned repository>
+```
+### Development
+```bash
+cd docs/ && make clean
+```
+
+### Staging
+```bash
+cd docs/ && make STAGING=1
+```
