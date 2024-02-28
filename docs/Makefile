@@ -32,7 +32,7 @@ tmp/all-done: index.js tmp tmp/fullchain.pem
 		$$(test -t 0 && printf '%s' '--interactive --tty') \
 		--detach-keys 'ctrl-^,ctrl-^' \
 		--env STAGING=$(STAGING) \
-		--publish 443:443 \
+		--publish 8443:8443 \
 		--rm \
 		--user $$(id -u):$$(id -g) \
 		--volume $$(pwd):/usr/src/app/ \

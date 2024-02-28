@@ -7,33 +7,16 @@ import { XRGestures } from './prm/XRGestures.js'
 import { OBB } from 'three/addons/math/OBB.js'
 import { TransformControls } from 'three/addons/controls/TransformControls.js'
 
-async function loadShader(url) {
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Failed to load shader: ${url}`);
-  }
-  return await response.text();
-}
-const vertexScreen =await loadShader('./prm/vertex_screen.glsl');
-const fragmentScreen = await loadShader('./prm/fragment_screen.glsl');
-const vertexModel = await loadShader('./prm/vertex_model.glsl');
-const fragmentModel = await loadShader('./prm/fragment_model.glsl');
-
 // place holder variables
 const _vector     = new THREE.Vector3();
 const _position   = new THREE.Vector3();
 const _direction  = new THREE.Vector3();
-const _quaternion = new THREE.Quaternion();
 const _scale      = new THREE.Vector3();
 const _matrix     = new THREE.Matrix4();
-const _plane      = new THREE.Plane();
 const _box        = new THREE.Box3();
 const _points     = new Array( 8 ).fill().map( () => new THREE.Vector3() );
 
-
 // constants
-const _zeros    = new THREE.Vector3( 0, 0, 0 );
-const _ones     = new THREE.Vector3( 1, 1, 1 );
 const _right   = new THREE.Vector3( 1, 0, 0 );
 const _up      = new THREE.Vector3( 0, 1, 0 );
 const _forward = new THREE.Vector3( 0, 0, 1 );
@@ -41,6 +24,12 @@ const _red     = new THREE.Color( 1, 0, 0 );
 const _green   = new THREE.Color( 0, 1, 0 );
 const _blue    = new THREE.Color( 0, 0, 1 );
 
+
+// load shaders
+const vertexScreen = await loadShader('./prm/vertex_screen.glsl');
+const fragmentScreen = await loadShader('./prm/fragment_screen.glsl');
+const vertexModel = await loadShader('./prm/vertex_model.glsl');
+const fragmentModel = await loadShader('./prm/fragment_model.glsl');
 
 // global objects
 let camera, scene, renderer, canvas, orbitControls, transformControls; // scene objects
@@ -51,9 +40,11 @@ let pointer, raycaster, gestures, reticle; // helper objects
 
 let hitTestSource, hitTestSourceRequested, hitTestResult; // parameters AR
 
+
+
 main();
 
-function main() {
+function main () {
 
   setupObjects();
   setupScene();
@@ -79,7 +70,7 @@ function setupObjects () {
   
 }
 
-function setupScene() {
+function setupScene () {
 
   // canvas setup
 
@@ -146,7 +137,7 @@ function setupScene() {
 
 }
 
-function setupGui() {
+function setupGui () {
 
   const gui = new GUI( { closeFolders: false } );
   const [folders, buttons] = [0, 1].map( () => [] );
@@ -169,9 +160,11 @@ function setupGui() {
   buttons[1].addEventListener( 'change', (event) => onMaskUpload( event ) );
 
 
+  // folders[1].add( buttons[1], 'click' ).name('Download Mask'); 
+
 }
 
-function setupButton() {   
+function setupButton () {   
 
   const overlay = document.getElementById( 'overlay-content' )
   const button = ARButton.createButton(renderer, {
@@ -187,11 +180,11 @@ function setupButton() {
 
 }
 
-function updateAnimation( timestamp, frame ) {
+function updateAnimation ( timestamp, frame ) {
 
   if ( renderer.xr.isPresenting ) {
 
-    if ( reticle.userData.enabled ) updateHitTest( renderer, frame, onHitTestResultReady, onHitTestResultEmpty );
+    if ( reticle.userData.enabled ) updateHitTest( renderer, frame, onHitTestResultReady, onHitTestResultEmpty, onSessionEnd );
 
     gestures.update();
 
@@ -203,20 +196,25 @@ function updateAnimation( timestamp, frame ) {
   renderer.render( scene, camera );
 }
 
-function setupAR() {
+function setupAR () {
+  
+  display.visible = false;
+  display.position.set( 0, 0, 0 );
+
+  renderer.xr.enabled = true; 
+  setupGestures();
 
   hitTestSourceRequested = false;
   hitTestSource = null;
-  display.visible = false;
 
-  setupGestures();
   setupReticle();
-
+  reticle.userData.enabled = true;
   scene.add( reticle );
+
 
 }
   
-function setupReticle() {
+function setupReticle () {
 
   const geometry = new THREE.RingGeometry( 0.15, 0.2, 32 ).rotateX( -Math.PI / 2 );
   const material = new THREE.MeshBasicMaterial({ 
@@ -231,11 +229,9 @@ function setupReticle() {
   reticle.material = material;
   reticle.matrixAutoUpdate = false;   
 
-  reticle.userData.enabled = true;
-
 }
 
-function setupGestures() {
+function setupGestures () {
     
   gestures = new XRGestures( renderer );
 
@@ -246,11 +242,11 @@ function setupGestures() {
   gestures.addEventListener( 'pinch',     event => onPinch( event ));
   gestures.addEventListener( 'twist',     event => onTwist( event ));  
   gestures.addEventListener( 'implode',   event => onImplode( event ));  
-  gestures.addEventListener( 'explode',   event => onImplode( event ));  
+  gestures.addEventListener( 'explode',   event => onExplode( event ));  
 
 }
 
-function updateHitTest( renderer, frame, onHitTestResultReady, onHitTestResultEmpty ) {
+function updateHitTest ( renderer, frame, onHitTestResultReady, onHitTestResultEmpty, onSessionEnd ) {
 
   const session = renderer.xr.getSession();
   const referenceSpace = renderer.xr.getReferenceSpace();
@@ -267,6 +263,16 @@ function updateHitTest( renderer, frame, onHitTestResultReady, onHitTestResultEm
       .then( (source) => { hitTestSource = source });  
 
     });
+
+    session.addEventListener( 'end', function () {
+
+      hitTestSourceRequested = false;
+      hitTestSource = null;
+      
+      onSessionEnd();
+
+    } );
+
   
     hitTestSourceRequested = true;
 
@@ -293,10 +299,10 @@ function updateHitTest( renderer, frame, onHitTestResultReady, onHitTestResultEm
 
 }
 
-  
-// update
 
-function setupDisplay() {
+// display
+
+function setupDisplay () {
 
   display.visible = false;
   display.matrixAutoUpdate = false;
@@ -316,7 +322,7 @@ function setupDisplay() {
 
 }
 
-function updateDisplay() {
+function updateDisplay () {
   
   display.updateMatrix();
 
@@ -340,7 +346,7 @@ function updateDisplay() {
 
 }
 
-function setupUniforms() {
+function setupUniforms () {
 
   display.userData.uNormalize = new THREE.Matrix4();
   display.userData.uDeNormalize = new THREE.Matrix4();
@@ -352,7 +358,7 @@ function setupUniforms() {
 
 }
 
-function updateUniforms() {
+function updateUniforms () {
 
   display.userData.uNormalize.copy( display.matrixWorld ).scale( volume.userData.size ).invert();
   
@@ -378,7 +384,7 @@ function updateUniforms() {
 
 }
 
-function updateUI() {
+function updateUI () {
 
   if ( display.userData.modes[0] === 'Place' ) {
 
@@ -519,9 +525,10 @@ function updateVolume ( image3D ) {
 
 }
 
+
 // mask
 
-function setupMask() { 
+function setupMask () { 
     
   const size = new THREE.Vector3( 1, 1, 1 );
   const samples = new THREE.Vector3( 100, 100, 100 );
@@ -604,7 +611,7 @@ function setupContainer() {
   const geometry = new THREE.BoxGeometry( ...size.toArray() );
   const material = new THREE.MeshBasicMaterial( { 
 
-    color: 0xff9999, 
+    color: 0xff9999, // 0x0055ff
     side: THREE.DoubleSide, 
     visible: true, 
     transparent: true,
@@ -702,6 +709,7 @@ function setupScreen () {
   const length = 2 * volume.userData.size.length();
   const geometry = [0, 1, 2].map( (i) => new THREE.PlaneGeometry( length, length ) );
   const material = [0, 1, 2].map( (i) => new THREE.ShaderMaterial( {
+
     glslVersion: THREE.GLSL3,
 
     // shader parameters
@@ -714,6 +722,7 @@ function setupScreen () {
     transparent: true,  
     depthWrite: true,
     depthTest: true,
+
   }));
   
   const monitors = [];
@@ -941,6 +950,7 @@ function setupModel () {
 
   model.geometry = geometry;
   model.material = material;
+
   computeBoundingBoxModel();
 }
 
@@ -961,6 +971,7 @@ function computeBoundingBoxModel () {
   
   const samples = mask.userData.samples;
   const voxel = mask.userData.voxelSize;
+  const offset = voxel.length() * 0.01;
   const center = new THREE.Vector3().copy( mask.userData.size ).divideScalar( 2 );
   
   let n = 0;
@@ -969,53 +980,60 @@ function computeBoundingBoxModel () {
   const point = new THREE.Vector3();
   const data = mask.userData.texture.image.data;
 
-  for (let k = 0; k < samples.z; k++) {
+  for ( let k = 0; k < samples.z; k++ ) {
     const offsetK = samples.x * samples.y * k
 
-    for (let j = 0; j < samples.y; j++) {
+    for ( let j = 0; j < samples.y; j++ ) {
       const offsetJ = samples.x * j 
 
-      for (let i = 0; i < samples.x; i++) {
+      for ( let i = 0; i < samples.x; i++ ) {
+
         n = i + offsetJ + offsetK;
 
-        if (data[n] > 0) {
-          point.set(i, j, k).multiply(voxel).sub(center); // display coordinates
+        if ( data[n] > 0 ) {
+
+          point.set( i, j, k ).multiply( voxel ).sub( center ); // display coordinates
   
-          min.x = Math.min(min.x, point.x);
-          min.y = Math.min(min.y, point.y);
-          min.z = Math.min(min.z, point.z);
+          min.x = Math.min( min.x, point.x );
+          min.y = Math.min( min.y, point.y );
+          min.z = Math.min( min.z, point.z );
   
-          max.x = Math.max(max.x, point.x);
-          max.y = Math.max(max.y, point.y);
-          max.z = Math.max(max.z, point.z);
+          max.x = Math.max( max.x, point.x );
+          max.y = Math.max( max.y, point.y );
+          max.z = Math.max( max.z, point.z );
+
         }
       }              
     }
   }
 
-  min.sub( voxel ); 
-  max.add( voxel );
+  min.sub( voxel ).subScalar( offset ); 
+  max.add( voxel ).addScalar( offset );
   const box = new THREE.Box3( min, max );
+
   model.userData.box = box;
 
   // update uniforms
   model.material.uniforms.uBoxMin.value.copy( min ).divide( mask.userData.size );
   model.material.uniforms.uBoxMax.value.copy( max ).divide( mask.userData.size );
+
 }
 
 // brush
 
-function setupBrush() {
+function setupBrush () {
 
   const radius = 0.01;
   const sphere = new THREE.Sphere( new THREE.Vector3(), radius );
   const geometry = new THREE.SphereGeometry( radius );
   const material = new THREE.MeshBasicMaterial( { 
+    
     color: 0xff0055, // 0x00ffff, 
     depthTest: true,
     depthWrite: true,
     transparent: true, 
-    opacity: 0.4 
+    opacity: 0.4,
+
   });
 
   brush.geometry = geometry;
@@ -1034,7 +1052,7 @@ function setupBrush() {
 
 }
 
-function updateBrush() {
+function updateBrush () {
   
   brush.userData.sphere.copy( brush.userData.sphere0 ).applyMatrix4( brush.matrix ); // in display coordinates
   brush.userData.box.copy( brush.userData.box0 ).applyMatrix4( brush.matrix );
@@ -1056,6 +1074,7 @@ function updateBrush() {
     brush.userData.monitorIndex = selected.object.userData.index;
     brush.userData.plane.copy( selected.object.userData.plane );
     brush.position.copy( display.worldToLocal( selected.point ) );
+
     brush.updateMatrix();    
 
     updateUI();
@@ -1070,9 +1089,9 @@ function updateBrush() {
     uniforms.uBrushVisible.value = brush.visible;
     uniforms.uBrushColor.value.setFromColor( brush.material.color );
     uniforms.uBrushRadius.value = brush.userData.sphere.radius * display.getWorldScale( _scale ).x;
-    uniforms.uBrushCenter.value.copy( brush.getWorldPosition( _position ));
+    uniforms.uBrushCenter.value.copy( brush.getWorldPosition( _position ) );
 
-  })
+  });
 
 }
  
@@ -1157,7 +1176,8 @@ function onKeydown ( event ) {
 
     case 27: // Esc
       transformControls.reset(); 
-      break;              
+      break;      
+              
   } 
 }
   
@@ -1170,9 +1190,6 @@ function onResize () {
 }
 
 function onButton ( event ) {
-
-  renderer.xr.enabled = true; 
-  display.visible = false;
 
   setupAR();
 
@@ -1194,7 +1211,20 @@ function onHitTestResultEmpty () {
   reticle.visible = false;
   
 }
-  
+
+function onSessionEnd () {
+
+  reticle.userData.enabled = false;
+  scene.remove( reticle );
+
+  camera.position.set( 1, 0.6, 1 );   
+
+  display.position.set( 0, 0, 0 );
+  display.userData.modes = [ 'Place', 'Inspect', 'Edit',  ];
+  updateDisplay();
+
+}
+
 // gestures
   
 function onPolytap ( event ) {
@@ -1249,7 +1279,9 @@ function onHold ( event ) {
   if ( display.userData.modes[0] === 'Place'   ) moveDisplay( event );
   if ( display.userData.modes[0] === 'Inspect' ) {
 
-    if ( intersectsScreenCenter( gestures.raycasters.handRay[0] ) ) {
+    if ( event.start ) event.userData.flag = intersectsScreenCenter( gestures.raycasters.handRay[0] );
+      
+    if ( event.userData.flag ) {
 
       moveScreen( event );
 
@@ -1257,7 +1289,7 @@ function onHold ( event ) {
 
       moveScreenMonitor( event );
 
-    }
+    }    
 
   }
   if ( display.userData.modes[0] === 'Edit'    ) editMask( event );
@@ -1297,6 +1329,9 @@ function onTwist ( event ) {
   
 function onExplode ( event ) {
   // console.log(`explode`);
+
+  if ( event.end ) renderer.xr.getSession().end();
+
 }
   
 function onImplode ( event ) {
@@ -1308,6 +1343,7 @@ function onImplode ( event ) {
   if ( display.userData.modes[0] === 'Edit') resetMask( event );
 
 }
+
 
 // display gesture actions
 
@@ -1327,7 +1363,7 @@ function unshiftMode ( event ) {
 
 }
 
-function saveDisplay( event ) {
+function saveDisplay ( event ) {
 
   display.updateMatrix();
 
@@ -1341,17 +1377,20 @@ function placeDisplay ( event ) {
 
   if ( event.end ) {
 
-    if ( ! display.visible ) {
+    if ( display.visible === false ) {
 
       display.position.setFromMatrixPosition( reticle.matrix ); 
       display.scale.divideScalar( 3 * Math.max( ... volume.userData.size.toArray() ) );
       display.translateY( 0.2 );  
+      
+      updateDisplay();
   
     }
-  
+
     display.visible = ! display.visible;
     reticle.visible = ! reticle.visible;
     reticle.userData.enabled = ! reticle.userData.enabled;
+
 
   }
  
@@ -1602,6 +1641,7 @@ function moveScreen ( event ) {
     model.material.uniforms.uModelAlpha.value = 0.4;
     model.material.uniforms.uModelAlphaClip.value = 0.4;
     model.material.needsUpdate;
+
     updateModel();
 
   } 
@@ -1844,6 +1884,7 @@ function moveScreenMonitor (event) {
       model.material.uniforms.uModelAlpha.value = 0.4;
       model.material.uniforms.uModelAlphaClip.value = 0.4;
       model.material.needsUpdate;
+
       updateModel();
 
     }
@@ -1863,13 +1904,14 @@ function moveScreenMonitor (event) {
       data.translation.subVectors(data.point, data.origin).projectOnVector(data.direction);
       data.position.copy(data.position0).add(data.translation);
 
-      // move screen only if the new position is inside the container
-      if ( container.userData.obb.containsPoint(data.position) ) {
+      screen.position.copy( data.position );
+      updateScreen();
 
-        screen.position.copy( data.position );
+      // // move screen only if the new position is inside the container
+      // if ( container.userData.obb.containsPoint(data.position) ) {
 
-        updateScreen();
-      }
+        
+      // }
     }
   }
 
@@ -1970,6 +2012,7 @@ function rotateScreenMonitor ( event ) {
 function editMask ( event ) {
 
   let data = event.userData;
+  console.log( data );
 
   if ( event.start ) {
 
@@ -2003,9 +2046,9 @@ function editMask ( event ) {
   
         for (let i = data.bounds.min.x; i <= data.bounds.max.x; i++) {
 
-          let index = i + offsetJ + offsetK;
+          let n = i + offsetJ + offsetK;
 
-          if ( mask.userData.texture.image.data[index] !== data.value ) {
+          if ( mask.userData.texture.image.data[n] !== data.value ) {
 
             data.voxelCenter.set( i, j, k ).addScalar( 0.5 ).multiply( mask.userData.voxelSize ).sub( data.center );          
             data.voxelBox.setFromCenterAndSize( data.voxelCenter, mask.userData.voxelSize ).expandByVector( data.offset ); // in display local coordinates
@@ -2013,17 +2056,13 @@ function editMask ( event ) {
             if ( data.voxelBox.intersectsPlane( brush.userData.plane ) && data.voxelBox.intersectsSphere( brush.userData.sphere ) ) {
 
               // record changes
-              data.record.indices.push( index );
-              data.record.data.push( mask.userData.texture.image.data[ index ] );
+              data.record.indices.push( n );
+              data.record.data.push( mask.userData.texture.image.data[ n ] );
 
               // edit mask
-              mask.userData.texture.image.data[ index ] = data.value;   
+              mask.userData.texture.image.data[ n ] = data.value;   
 
-              if ( brush.userData.mode === 'ADD' ) {
-
-                model.userData.box.union( data.voxelBox );
-
-              }        
+              if ( brush.userData.mode === 'ADD' ) model.userData.box.union( data.voxelBox );
 
             }  
 
@@ -2069,6 +2108,7 @@ function editMask ( event ) {
       model.material.uniforms.uBoxMax.value.copy( model.userData.box.max ).divide( mask.userData.size );
 
     } 
+
     model.material.needsUpdate = true;
 
     data = {};
@@ -2211,40 +2251,20 @@ function resizeBrush ( event ) {
   let data = event.userData;
 
   if ( event.start ) {
-    
-    camera.getWorldDirection( _direction );
-    screen.getWorldPosition( _position );
-
-    data.hitPlane = new THREE.Plane().setFromNormalAndCoplanarPoint( _direction, _position ); // world cs
-    data.points = [ 0, 1 ].map( () => new THREE.Vector3() ); // world cs  
-    
-    gestures.raycasters.handRay.forEach( (ray, i) => ray.intersectPlane( data.hitPlane, data.points[i] ) );
-
-    if ( data.points.every( Boolean ) ) {
-
-      data.distance0 = data.points[0].distanceTo( data.points[1] ); 
-      data.distance = data.distance0;
-
-      data.scale0 = brush.scale.clone();  
-
-    }    
+  
+    data.scale0 = brush.scale.clone();    
+    data.scalar = 1;
 
   } 
 
   if ( event.current ) {
 
-    camera.getWorldDirection( data.hitPlane.normal );        
-    gestures.raycasters.handRay.forEach( (ray, i) => ray.intersectPlane( data.hitPlane, data.points[i] ) );
+    data.scalar = ( gestures.parametersDual.distance / gestures.parametersDual.distance0 ) ** 1.5;
+    brush.scale.copy( data.scale0 );
+    brush.scale.multiplyScalar( data.scalar );
 
-    if ( data.points.every( Boolean ) ) {
-
-      data.distance = data.points[0].distanceTo( data.points[1] );
-
-      brush.scale.copy( data.scale0 );
-      brush.scale.multiplyScalar( (data.distance / data.distance0) ** 2 );
-
-    };
-
+    updateDisplay();
+    
   } 
   
   if ( event.end ) { 
@@ -2255,9 +2275,25 @@ function resizeBrush ( event ) {
 
 }
 
+
 // helpers
 
+async function loadShader ( url ) {
+
+  const response = await fetch(url);
+  
+  if ( ! response.ok ) {
+
+    throw new Error(`Failed to load shader: ${url}`);
+
+  }
+
+  return await response.text();
+
+}
+
 function loadNIFTI ( file ) {
+
   return new Promise((resolve, reject) => {
     
     if ( ! file ) reject("Error: No file selected");   
@@ -2274,13 +2310,16 @@ function loadNIFTI ( file ) {
       if ( ! decoder.getOutput() ) reject("Error: File cannot be decoded");
       const image3D = decoder.getOutput();
       resolve( image3D );
+      
     });
+
   });
+
 }
 
 function saveNIFTI ( file ) {
 
-  if (nifti.isCompressed(event.target.result)) {
+  if ( nifti.isCompressed(event.target.result) ) {
 
     fileDecompressed = nifti.decompress(event.target.result);
 
@@ -2293,22 +2332,31 @@ function saveNIFTI ( file ) {
   const niftiHeaderTmp = fileDecompressed.slice(0, 352);
   const tmp = new Uint16Array(niftiHeaderTmp, 0, niftiHeaderTmp.length);
   tmp[35] = 2;
+
   const data = [tmp, new Uint16Array(masks.buffer, 0, masks.buffer.length)];
   const fileName = "masks.nii";
+
   saveData(data, fileName);
 
 }
 
-function saveData(data, fileName) {
+function saveData ( data, fileName ) {
 
-	const a = document.createElement("a");
-	document.body.appendChild(a);
-	const blob = new Blob(data);
-	const url = window.URL.createObjectURL(blob);
-	a.href = url;
-	a.download = fileName;
-	a.click();
-	window.URL.revokeObjectURL(url);
+	const element = document.createElement("a");
+	document.body.appendChild( element );
+  element.style.display = 'none';
+
+  // Ensure data is in an array and specify the MIME type (if known/applicable)
+	const blob = new Blob( data );
+	const url = window.URL.createObjectURL( blob );
+
+	element.href = url;
+	element.download = fileName;
+	element.click();
+  
+  // Clean up
+	window.URL.revokeObjectURL( url );
+  document.body.removeChild( element );
 
 }
 
@@ -2383,7 +2431,7 @@ function positionToAxis ( position ) {
   return axis;
 }
 
-function getVertices( geometry ) {
+function getVertices ( geometry ) {
 
   let vertices = new Array( geometry.attributes.position.count ).fill().map( () => new THREE.Vector3() );
 
@@ -2407,7 +2455,7 @@ function getVertices( geometry ) {
 
 }
 
-function applyComponentwise( vector, f ) {
+function applyComponentwise ( vector, f ) {
 
   vector.set(
 

@@ -23,7 +23,7 @@ uniform float uModelAlphaClip;
 out vec4 color;
 
 #define Inf 3.402823466e+38 // works for precision highp float;
-#define stepFactor 0.5
+#define stepFactor 1.0
 
 float getSample( vec3 position ) {
 
@@ -36,24 +36,13 @@ vec3 getNormal( vec3 position ) {
 
     vec3 offset = uTextelSize;
     vec3 deltaInv = 0.5 / offset;
-    vec3 boundMin = vec3(0.5 - offset);
-    bvec3 boundary = greaterThan( abs(position), boundMin );
 
-    vec3 gradient;
-    if ( any (boundary) ) {
-
-        gradient = vec3(boundary) * sign( position);
-
-    } else {
-
-        gradient = vec3(
-            getSample(position + vec3(-offset.x, 0.0, 0.0)) - getSample(position + vec3(offset.x, 0.0, 0.0)),
-            getSample(position + vec3(0.0, -offset.y, 0.0)) - getSample(position + vec3(0.0, offset.y, 0.0)),
-            getSample(position + vec3(0.0, 0.0, -offset.z)) - getSample(position + vec3(0.0, 0.0, offset.z))
-        );
-        
-    }
-
+    vec3 gradient = vec3(
+        getSample(position + vec3(-offset.x, 0.0, 0.0)) - getSample(position + vec3(offset.x, 0.0, 0.0)),
+        getSample(position + vec3(0.0, -offset.y, 0.0)) - getSample(position + vec3(0.0, offset.y, 0.0)),
+        getSample(position + vec3(0.0, 0.0, -offset.z)) - getSample(position + vec3(0.0, 0.0, offset.z))
+    );
+    
     gradient *= deltaInv;  
 
     return normalize( gradient );
@@ -142,7 +131,6 @@ float intersectScreen( vec3 origin, vec3 direction ) {
 }
 
 vec2 rayMarch( vec3 origin, vec3 direction, vec2 bounds, float step ) {
-    // I sould discritize depth in order to avoid flickering
 
     vec3 position = origin + bounds.x * direction;
     float intensityPrev = getSample(position);
@@ -181,13 +169,18 @@ void main(){
 
     }
 
-    float step = getStep( direction );
-    vec2 result = rayMarch( uCameraPosition, direction, bounds, step );
+    float delta = getStep( direction );
+    vec2 result = rayMarch( uCameraPosition, direction, bounds, delta );
+
     if ( result.y > 0.0 ) {
 
         // coloring
         vec3 position = uCameraPosition + result.x * direction;      
-        color.rgb = 0.9 * (getNormal( position ) * 0.5 + 0.5);
+
+        vec3 defaultColor = 0.9 * vec3( 1.0, 0.2, 0.2 );
+        float product = abs(dot(direction, getNormal( position )));
+
+        color.rgb = defaultColor * product;
         color.a = isClipped(position) ? uModelAlphaClip : uModelAlpha;
 
     }

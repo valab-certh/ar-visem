@@ -103,4 +103,3 @@ void main() {
     // if ( isAxis == 1.0 ) discard;
   
 }
-
