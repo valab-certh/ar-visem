@@ -2455,7 +2455,7 @@ function getVertices ( geometry ) {
 
 }
 
-function applyComponentwise ( vector, f ) {
+function applyVectorFunction ( vector, f ) {
 
   vector.set(
 
