@@ -1,11 +1,11 @@
-import * as THREE from "three"
-import * as PIXPIPE from "./prm/pixpipe.esmodule.js"
-import GUI from 'https://cdn.jsdelivr.net/npm/lil-gui@0.19/+esm';
-import { OrbitControls } from "three/addons/controls/OrbitControls.js"
-import { ARButton } from 'three/addons/webxr/ARButton.js';
-import { XRGestures } from './prm/XRGestures.js'
-import { OBB } from 'three/addons/math/OBB.js'
-import { TransformControls } from 'three/addons/controls/TransformControls.js'
+import GUI                    from "lil-gui"
+import * as THREE             from "three"
+import * as PIXPIPE           from "./prm/pixpipe.esmodule.js"
+import { XRGestures }         from './prm/XRGestures.js'
+import { OBB }                from 'three/addons/math/OBB.js'
+import { ARButton }           from 'three/addons/webxr/ARButton.js'
+import { OrbitControls }      from "three/addons/controls/OrbitControls.js"
+import { TransformControls }  from 'three/addons/controls/TransformControls.js'
 
 // place holder variables
 const _vector     = new THREE.Vector3();
@@ -23,7 +23,6 @@ const _forward = new THREE.Vector3( 0, 0, 1 );
 const _red     = new THREE.Color( 1, 0, 0 );
 const _green   = new THREE.Color( 0, 1, 0 );
 const _blue    = new THREE.Color( 0, 0, 1 );
-
 
 // load shaders
 const vertexScreen = await loadShader('./prm/vertex_screen.glsl');
@@ -392,8 +391,8 @@ function updateUI () {
     container.userData.outline.visible = true;
 
     model.visible = true;
-    model.material.uniforms.uModelAlpha.value = 1.0;
-    model.material.uniforms.uModelAlphaClip.value = 1.0;
+    model.material.uniforms.uModelAlpha.value = 0.8;
+    model.material.uniforms.uModelAlphaClip.value = 0.8;
 
     brush.visible = false;
 
@@ -416,8 +415,8 @@ function updateUI () {
     container.userData.outline.visible = true;
 
     model.visible = true;
-    model.material.uniforms.uModelAlpha.value = 1.0;
-    model.material.uniforms.uModelAlphaClip.value = 0.4;
+    model.material.uniforms.uModelAlpha.value = 0.8;
+    model.material.uniforms.uModelAlphaClip.value = 0.0;
    
     brush.visible = false;
 
@@ -2275,7 +2274,6 @@ function resizeBrush ( event ) {
 
 }
 
-
 // helpers
 
 async function loadShader ( url ) {
@@ -2431,7 +2429,7 @@ function positionToAxis ( position ) {
   return axis;
 }
 
-function getVertices ( geometry ) {
+function getGeometryVertices ( geometry ) {
 
   let vertices = new Array( geometry.attributes.position.count ).fill().map( () => new THREE.Vector3() );
 
@@ -2455,13 +2453,13 @@ function getVertices ( geometry ) {
 
 }
 
-function applyVectorFunction ( vector, f ) {
+function applyVectorFunction ( vector, fun ) {
 
   vector.set(
 
-    f( vector.x ),
-    f( vector.y ),
-    f( vector.z ),
+    fun( vector.x ),
+    fun( vector.y ),
+    fun( vector.z ),
     
   )
   

@@ -4,7 +4,7 @@
   
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Augmented reality tool</title>  
+  <title>Augmented Reality Tool</title>  
   
   <link rel="stylesheet" type="text/css" href="style.css">
 
@@ -12,32 +12,60 @@
 
 <body>
 
-  <!-- INCISIVE Logo -->
+  <!-- logo -->
 
-  <nav>
-    <a href="https://cordis.europa.eu/project/id/952179">
-      <img alt="INCISIVE Cordis webpage" src="https://incisive-project.eu/wp-content/uploads/2021/01/incisive-header-logo.svg" height="20">
-    </a> 
-  </nav>
+
+  <body>
+    <div id="logoDiv">
+      
+      <!-- incisive logo -->
+      <div>
+        <a href="https://cordis.europa.eu/project/id/952179">
+          <img alt="INCISIVE Cordis webpage" src="https://incisive-project.eu/wp-content/uploads/2021/01/incisive-header-logo.svg" height="20">      
+        </a>
+      </div>
+
+      <!-- github repo logo-->
+      <div>
+        <a href=https://github.com/XaralampidisBasilis/incisive-ar-too>
+          <i class="fa fa-github"></i>
+        </a>
+      </div>
+      
+      <!-- download example -->
+      <div >
+        <p style="margin-bottom:0">
+        <a id="volumeFile"class="filelinks" href="https://github.com/XaralampidisBasilis/incisive-ar-tool/raw/development/docs/prm/lung.nii.gz"><i class="fas fa-download"></i> volume.nii.gz</a>
+        </p>
+        <p style="margin-top:5px">
+        <a id="maskFile"class="filelinks" href="https://github.com/XaralampidisBasilis/incisive-ar-tool/raw/development/docs/prm/lung_mask.nii.gz"><i class="fas fa-download"></i> mask.nii.gz</a>
+        </p>
+      </div>
+     
+    </div>
   
-  <!-- Upload Buttons -->
 
-  <input type="file" id="uploadVolume" style="display:none"/>
-  <input type="file" id="uploadMask" style="display:none"/>
-  <div id="overlay-content"></div>
-
- 
-  <!-- Import Tree.js from CDN-->
+  <!-- tree.js and lil-gui from cdn -->
 
   <script type="importmap">
     {
       "imports": {
+        "lil-gui": "https://cdn.jsdelivr.net/npm/lil-gui@0.19/+esm",
         "three": "https://unpkg.com/three@0.161.0/build/three.module.js",
         "three/addons/": "https://unpkg.com/three@0.161.0/examples/jsm/"
       }
     }
   </script>
 
+  <!-- lil-gui buttons -->
+
+  <input type="file" id="uploadVolume" style="display:none"/>
+  <input type="file" id="uploadMask"   style="display:none"/>
+  <div id="overlay-content"></div>
+
+  
+  <!-- main script -->
+ 
   <script type="module" src="script.js"></script>
 
 
