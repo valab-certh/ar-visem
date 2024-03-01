@@ -476,7 +476,7 @@ function updateUI () {
     container.material.opacity = 0.0;   
     container.userData.outline.visible = false;
 
-    model.visible = false;
+    model.visible = true;
     model.material.uniforms.uModelAlpha.value = 0.4;
     model.material.uniforms.uModelAlphaClip.value = 0.4;
 
@@ -487,7 +487,7 @@ function updateUI () {
     screen.userData.monitors.forEach( (monitor) => {
 
       monitor.renderOrder = 1.0;
-      monitor.visible = false;
+      monitor.visible = true;
 
       const uniforms = monitor.material.uniforms;
       uniforms.uPlaneAlpha.value = 1.0;     
@@ -561,7 +561,6 @@ function updateVolume ( image3D ) {
   });
 
 }
-
 
 // mask
 
@@ -1132,14 +1131,14 @@ function updateBrush () {
 
 }
 
-
 // selector 
 
 function setupSelector () {
   
   selector.clear();
 
-  selector.geometry = new THREE.BoxGeometry( 1, 1, 1 );
+  const boxSize = new THREE.Vector3( 1, 1, 1 );
+  selector.geometry = new THREE.BoxGeometry( ...boxSize.toArray() );
   selector.material = new THREE.MeshBasicMaterial( { 
 
     color: 0x0055ff, 
@@ -1147,14 +1146,14 @@ function setupSelector () {
     visible: true, 
     transparent: true,
     opacity: 0.1,
-    depthTest: true,
-    depthWrite: true,
 
   });
  
   // setup selector objects
 
   selector.geometry.computeBoundingBox();
+  selector.userData.pointLength = boxSize.length() * 0.04;
+  selector.userData.pointScalar = 2;
 
   setupSelectorOutline();
   setupSelectorObb();
@@ -1163,7 +1162,7 @@ function setupSelector () {
 
   // update selector scale size
 
-  selector.scale.copy( volume.userData.size ).divideScalar( 4 );
+  selector.scale.copy( volume.userData.size );
   selector.updateMatrix();
 
   updateSelector();
@@ -1205,17 +1204,18 @@ function setupSelectorVertices () {
 
   // add meshed to vertices
 
-  const side = halfSize.length() * 0.01;
-  const radius = Math.sqrt( 3 ) * side / 2;
-  const geometry = new THREE.BoxGeometry( side, side, side );
+  const size = new THREE.Vector3().addScalar( selector.userData.pointLength );
+  const radiusExpand = 2 * selector.userData.pointLength / 3 * selector.userData.pointScalar;
+  const geometry = new THREE.BoxGeometry( ...size.toArray() );
   const material = new THREE.MeshBasicMaterial( { 
 
     color: 0x0055ff, 
     side: THREE.DoubleSide, 
     visible: true, 
-    transparent: false,
-    depthTest: true,
-    depthWrite: true,
+    transparent: true,
+    opacity: 0.5,
+    depthTest: false,
+    depthWrite: false,
 
   });
   
@@ -1226,8 +1226,9 @@ function setupSelectorVertices () {
     selector.userData.vertices[i] = new THREE.Mesh( geometry, material ); 
     selector.userData.vertices[i].position.copy( positions[i] );
     selector.userData.vertices[i].matrixAutoUpdate = false;
+    selector.userData.vertices[i].renderOrder = selector.renderOrder;
 
-    selector.userData.vertices[i].userData.sphere = new THREE.Sphere( new THREE.Vector3(), 2 * radius );
+    selector.userData.vertices[i].userData.sphere = new THREE.Sphere( new THREE.Vector3(), radiusExpand );
     selector.userData.vertices[i].userData.sphere0 = selector.userData.vertices[i].userData.sphere.clone();
 
     selector.add( selector.userData.vertices[i] );
@@ -1256,17 +1257,18 @@ function setupSelectorFaces () {
 
   // add meshed to vertices
 
-  const radius = halfSize.length() * 0.008;
+  const radius = 2 * selector.userData.pointLength / 3; 
+  const radiusExpand = radius * selector.userData.pointScalar;
   const geometry = new THREE.SphereGeometry( radius );
   const material = new THREE.MeshBasicMaterial( { 
 
-    color: 0x0055ff, 
+    color: 0xffff55, // 0x0055ff, 
     side: THREE.DoubleSide, 
     visible: true, 
-    transparent: false,
+    transparent: true,
     opacity: 0.5,
-    depthTest: true,
-    depthWrite: true,
+    depthTest: false,
+    depthWrite: false,
 
   });
   
@@ -1277,8 +1279,9 @@ function setupSelectorFaces () {
     selector.userData.faces[i] = new THREE.Mesh( geometry, material ); 
     selector.userData.faces[i].position.copy( positions[i] );
     selector.userData.faces[i].matrixAutoUpdate = false;
+    selector.userData.faces[i].renderOrder = selector.renderOrder;
 
-    selector.userData.faces[i].userData.sphere = new THREE.Sphere( new THREE.Vector3(), 2 * radius );
+    selector.userData.faces[i].userData.sphere = new THREE.Sphere( new THREE.Vector3(), radiusExpand );
     selector.userData.faces[i].userData.sphere0 = selector.userData.faces[i].userData.sphere.clone();
 
     selector.add( selector.userData.faces[i] );
@@ -1307,8 +1310,7 @@ function updateSelectorVertices () {
 
     vertex = selector.userData.vertices[i];
 
-    vertex.scale.set( 1, 1, 1 ).divide( selector.scale );
-
+    vertex.scale.set( 1, 1, 1 ).divide( selector.scale ).multiplyScalar( (selector.scale.x + selector.scale.y + selector.scale.z) / 3 );
     vertex.updateMatrix();
     
     vertex.userData.sphere.copy( vertex.userData.sphere0 ).applyMatrix4( vertex.matrixWorld );
@@ -1323,8 +1325,7 @@ function updateSelectorFaces () {
 
     face = selector.userData.faces[i];
 
-    face.scale.set( 1, 1, 1 ).divide( selector.scale );
-
+    face.scale.set( 1, 1, 1 ).divide( selector.scale ).multiplyScalar( (selector.scale.x + selector.scale.y + selector.scale.z) / 3 );
     face.updateMatrix();
     
     face.userData.sphere.copy( face.userData.sphere0 ).applyMatrix4( face.matrixWorld );
@@ -1333,7 +1334,7 @@ function updateSelectorFaces () {
 
 }
 
-function intersectSelector ( rayOrOrigin, direction ) {
+function intersectSelectorObb ( rayOrOrigin, direction ) {
 
   if ( rayOrOrigin instanceof THREE.Ray && direction === undefined ) {
 
@@ -1490,6 +1491,16 @@ function intersectSelectorFaces ( rayOrOrigin, direction ) {
   return intersections;
 
 }
+
+function intersectsSelector ( rayOrOrigin, direction ) {
+
+  if ( intersectSelectorVertices( rayOrOrigin, direction ).length > 0 ) return 'vertex';
+  if ( intersectSelectorFaces ( rayOrOrigin, direction ).length > 0 ) return 'face';
+  if ( intersectSelectorObb ( rayOrOrigin, direction ).length > 0 ) return 'obb';
+
+  return false;
+
+}
  
 // events
 
@@ -1502,6 +1513,7 @@ function onVolumeUpload ( event ) {
     setupContainer(); 
     setupScreen();
     setupModel();
+    setupSelector();
 
     updateDisplay();
     updateUI();
@@ -1624,7 +1636,7 @@ function onSessionEnd () {
   camera.position.set( 1, 0.6, 1 );   
 
   display.position.set( 0, 0, 0 );
-  display.userData.modes = [ 'Place', 'Inspect', 'Edit',  ];
+  display.userData.modes = [ 'Place', 'Inspect', 'Edit', 'Segment' ];
   updateDisplay();
 
 }
@@ -1702,7 +1714,20 @@ function onHold ( event ) {
 
   }
   if ( display.userData.modes[0] === 'Edit'    ) editMask( event );
-  if ( display.userData.modes[0] === 'Segment' ) moveSelectorFace( event );
+  if ( display.userData.modes[0] === 'Segment' ) {
+
+    if ( event.start ) event.userData.flag = intersectsSelector( gestures.raycasters.handRay[0] );
+
+    switch ( event.userData.flag ) {
+
+      case 'vertex' : moveSelectorVertex( event ); break;
+      case 'face'   : moveSelectorFace  ( event ); break;
+      case 'obb'    : moveSelectorObb   ( event ); break;
+      default :
+
+    }
+
+  }
 
 }
 
@@ -1712,8 +1737,8 @@ function onPan ( event ) {
 
   if ( display.userData.modes[0] === 'Place'   ) rotateDisplay( event );
   if ( display.userData.modes[0] === 'Inspect' ) rotateScreenMonitor( event );
-  if ( display.userData.modes[0] === 'Edit'    ) ;
-  if ( display.userData.modes[0] === 'Segment' ) ;
+  if ( display.userData.modes[0] === 'Edit'    ) rotateDisplay( event );
+  if ( display.userData.modes[0] === 'Segment' ) rotateDisplay( event );
 
 }
   
@@ -1721,10 +1746,10 @@ function onPinch ( event ) {
 
   // console.log(`pinch: ${display.userData.modes[0]}`);
 
-  if ( display.userData.modes[0] === 'Place') resizeDisplay( event );
-  if ( display.userData.modes[0] === 'Inspect') resizeDisplay( event );
-  if ( display.userData.modes[0] === 'Edit') resizeBrush( event );
-  if ( display.userData.modes[0] === 'Segment' ) ;
+  if ( display.userData.modes[0] === 'Place'   ) resizeDisplay ( event );
+  if ( display.userData.modes[0] === 'Inspect' ) resizeDisplay ( event );
+  if ( display.userData.modes[0] === 'Edit'    ) resizeBrush   ( event );
+  if ( display.userData.modes[0] === 'Segment' ) resizeSelector( event );
 
 } 
 
@@ -1753,7 +1778,7 @@ function onImplode ( event ) {
   if ( display.userData.modes[0] === 'Place') resetDisplay( event );
   if ( display.userData.modes[0] === 'Inspect') resetScreen( event );
   if ( display.userData.modes[0] === 'Edit') resetMask( event );
-  if ( display.userData.modes[0] === 'Segment' ) ;
+  if ( display.userData.modes[0] === 'Segment' ) resetSelector( event );
 
 }
 
@@ -2689,6 +2714,79 @@ function resizeBrush ( event ) {
 
 // selector gesture actions 
 
+function resizeSelector ( event ) {
+
+  let data = event.userData;
+
+  if ( event.start ) {
+  
+    data.scale0 = selector.scale.clone();    
+    data.scalar = 1;
+
+  } 
+
+  if ( event.current ) {
+
+    data.scalar = ( gestures.parametersDual.distance / gestures.parametersDual.distance0 ) ** 1.5;
+    selector.scale.copy( data.scale0 );
+    selector.scale.multiplyScalar( data.scalar );
+
+    updateSelector();
+    
+  } 
+  
+  if ( event.end ) { 
+    
+    data = {};
+
+  }
+
+}
+
+function resetSelector ( event ) {
+
+  selector.position.set( 0, 0, 0 );
+  selector.scale.copy( volume.userData.size );
+  selector.updateMatrix();
+
+  updateSelector();  
+  
+}
+
+function moveSelectorObb ( event ) {
+
+  let data = event.userData;
+
+  if ( event.start ){
+
+    data.point = new THREE.Points();
+
+    selector.getWorldPosition( data.point.position );
+
+    gestures.controller[0].attach( data.point ); 
+
+  } 
+
+  if ( event.current ) {
+
+    data.point.getWorldPosition( selector.position );
+    display.worldToLocal( selector.position );
+    
+    selector.updateMatrix();
+
+    updateSelector();
+
+  } 
+  
+  if ( event.end ) {
+
+    gestures.controller[0].remove( data.point ); 
+    data = {};
+
+  } 
+
+}
+
 function moveSelectorVertex ( event ) {
 
   let data = event.userData;
@@ -2757,62 +2855,81 @@ function moveSelectorFace ( event ) {
 
   if ( event.start ) {
 
-    data.selected = intersectSelectorFaces( gestures.raycasters.handRay[0] )[0];
+    data.intersection = intersectSelectorFaces( gestures.raycasters.handRay[0] )[0];
 
-    if ( data.selected ) {
+    if ( data.intersection ) {
       
-      const object3D = data.selected.object;
-      data.origin = object3D.position.clone().applyMatrix4( object3D.matrixWorld ); // world coordinate system
-      data.normal = object3D.position.clone().transformDirection( object3D.matrixWorld ).normalize(); // world coordinate system
-      
-      // get dimension index that will change
-      const array = data.normal.toArray().map( Math.abs );
-      data.index = array.indexOf( Math.max(...array) );
+      // display local coordinate system
 
-      // create hit plane and ray in world coordinates
-      data.hitPlane = new THREE.Plane().setFromNormalAndCoplanarPoint( gestures.raycasters.viewRay.direction, data.origin ); // world coordinate system
-      data.hitRay = new THREE.Ray( data.origin, data.normal );
+      data.selector = {
+        scale0:    new THREE.Vector3().copy( selector.scale ),   
+        position0: new THREE.Vector3().copy( selector.position ),
+      }
 
-      // create points in display coordinates
-      data.hitPoint = display.worldToLocal( data.origin.clone() ); 
-      data.hitPoint0 = data.hitPoint.clone(); 
-      data.hitPointMirror0 = selector.position.clone().multiplyScalar( 2 ).sub( data.hitPoint0 ); 
+      data.matrices = {
+        w: new THREE.Matrix4().copy( display.matrixWorld ).invert(), // world -> display coordinate system transformation
+        m: new THREE.Matrix4().copy( selector.matrix ), // selector -> display coordinate system transformation
+      }
 
-      data.distance = 0;  // display local coordinate
-      data.position = selector.position.clone(); // display local coordinates
+      data.points = {
+        o:  new THREE.Vector3().copy( data.intersection.object.position ).applyMatrix4( data.matrices.m ), // selected face sphere center
+        p:  new THREE.Vector3().copy( data.intersection.point ).applyMatrix4( data.matrices.w ), // intersection point of selected face sphere and hand ray
+        q:  new THREE.Vector3(), // later intersection point of plane with hand ray
+      };
+
+      data.vectors = {
+        n:  new THREE.Vector3(),
+        d:  new THREE.Vector3().subVectors( data.points.o, data.selector.position0 ).normalize(), // direction normal of selector box face
+        op: new THREE.Vector3().subVectors( data.points.p, data.points.o ),
+        pq: new THREE.Vector3(),
+      }
+
+      data.vectors.n.copy( gestures.raycasters.viewRay.direction ).transformDirection( data.matrices.w ).projectOnPlane( data.vectors.d ).normalize();
+
+      data.shapes = {
+        plane: new THREE.Plane().setFromNormalAndCoplanarPoint( data.vectors.n, data.points.p ), // intersection plane centered at point 
+        ray:   new THREE.Ray().copy( gestures.raycasters.handRay[0] ).applyMatrix4( data.matrices.w ), // intersection hand ray in local coordinates
+        line:  new THREE.Line3().set( data.points.p, data.points.p.clone().add( data.vectors.d ) ), // projection line to the direction of face
+      }
  
     }
 
   }
 
-  if ( event.current && data.selected ) {
+  if ( event.current && data.intersection ) {
 
-    // WORLD COORDINATES
+    // update plane
+    data.shapes.plane.normal.copy( gestures.raycasters.viewRay.direction ).transformDirection( data.matrices.w ).projectOnPlane( data.vectors.d ).normalize();
+    // console.log( `plane normal = ${formatVector( data.shapes.plane.normal, 2 )}`);
+    // console.log( `plane constant = ${data.shapes.plane.constant.toFixed( 3 )}`);
 
-    // update hit plane
-    camera.getWorldDirection( data.hitPlane.normal ).projectOnPlane( data.normal ).normalize();
+    // update ray 
+    data.shapes.ray.copy( gestures.raycasters.handRay[0] ).applyMatrix4( data.matrices.w );
+    // console.log( `ray direction = ${formatVector( data.shapes.ray.direction, 2 )}`);  
+    // console.log( `ray origin = ${formatVector( data.shapes.ray.origin, 2 )}`);  
 
-    // intersect hit plane with hand ray
-    gestures.raycasters.handRay[0].intersectPlane( data.hitPlane, data.hitPoint );  // world coordinate system
-    
-    // project hit point to the hit ray
-    data.hitRay.closestPointToPoint( data.hitPoint, data.hitPoint ); // world coordinates
-    
-    
-    // DISPLAY LOCAL COORDINATES
+    // intersect ray with plane
+    data.shapes.ray.intersectPlane( data.shapes.plane, data.points.q );
+    // console.log( `q = ${formatVector( data.points.q,  2 )}`)
 
-    display.worldToLocal( data.hitPoint ); 
+    if ( data.points.q ) {
 
-    // compute selector box new scale 
-    data.distance = data.hitPoint.distanceTo( data.hitPointMirror0 );
-    selector.scale.setComponent( data.index, data.distance );
+      // project point to line
+      data.shapes.line.closestPointToPoint( data.points.q, false, data.points.q ); 
+      // console.log( `q = ${formatVector( data.points.q,  2 )}`)
 
-    // compute selector box new position  
-    data.position.addVectors( data.hitPoint, data.hitPointMirror0 ).divideScalar( 2 ); // display local coordinates
-    selector.position.copy( data.position );
+      // get intersection vector
+      data.vectors.pq.subVectors( data.points.q, data.points.p );
+      // console.log( `pq = ${formatVector( data.vectors.pq, 3 ) }` )
 
-    // update selector box
-    updateSelector();
+      // update selector
+      selector.position.copy( data.selector.position0 ).addScaledVector( data.vectors.pq, 0.5 );
+      selector.scale.copy( data.selector.scale0 ).add( data.vectors.pq );
+      applyVectorFunction( selector.scale, Math.abs );
+
+      updateSelector();
+      
+    }    
 
   }
 
@@ -2903,7 +3020,7 @@ function saveMask () {
 
   const header = mask.userData.raw.slice( 0, 352 );
   const headerTemp = new Uint16Array( header, 0, header.length );
-  headerTemp[35] = 2;
+  headerTemp[35] = 2; // convert data type to UInt8
 
   const image = mask.userData.texture.image.data;
   const data = [ headerTemp, new Uint16Array( image.buffer, 0, image.buffer.length ) ];
@@ -2920,7 +3037,7 @@ function saveData ( data, fileName ) {
   element.style.display = 'none';
 
   // Ensure data is in an array and specify the MIME type (if known/applicable)
-	const blob = new Blob( data );
+  const blob = new Blob(data, { type: 'application/octet-stream' });
 	const url = window.URL.createObjectURL( blob );
 
 	element.href = url;
@@ -3038,4 +3155,13 @@ function applyVectorFunction ( vector, fun ) {
     
   )
   
+}
+
+function formatVector( vector, digits ) {
+
+  let sign = vector.toArray().map( (component) => ( component > 0 ) ? '+' : '-' );
+
+  if ( vector instanceof THREE.Vector2 ) return `(${sign[0] + Math.abs(vector.x).toFixed(digits)}, ${sign[1] + Math.abs(vector.y).toFixed(digits)})`;
+  if ( vector instanceof THREE.Vector3 ) return `(${sign[0] + Math.abs(vector.x).toFixed(digits)}, ${sign[1] + Math.abs(vector.y).toFixed(digits)}, ${sign[2] + Math.abs(vector.z).toFixed(digits)})`;
+
 }
