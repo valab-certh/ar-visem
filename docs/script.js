@@ -737,6 +737,13 @@ function setupScreen () {
     uBrushRadius: { value: 0 },
     uBrushCenter: { value: new THREE.Vector3() },
 
+    // selector parameters
+    uSelectorVisible: { value: false },
+    uSelectorOpacity: { value: 1.0 },
+    uSelectorColor: { value: new THREE.Vector3() },
+    uSelectorSize: { value: new THREE.Vector3() },
+    uSelectorCenter: { value: new THREE.Vector3() },
+
     // color parameters
     uBrightness: { value: 0.0 },
     uContrast: { value: 1.2 },
@@ -877,6 +884,38 @@ function updateScreenAxis () {
       axis.position.copy( axis.userData.points[0] );
       axis.setLength( axis.userData.points[0].distanceTo( axis.userData.points[1] ), 0.02, 0.01 );
     }    
+  });
+
+}
+
+function updateScreenUniformsSelector() {
+
+  screen.userData.monitors.forEach( (monitor) => {
+
+    const uniforms = monitor.material.uniforms;
+
+    uniforms.uSelectorVisible.value = selector.visible;
+    uniforms.uSelectorOpacity.value = selector.material.opacity;
+    uniforms.uSelectorColor.value.setFromColor( selector.material.color );
+    uniforms.uSelectorSize.value.copy( selector.scale ).divide( volume.userData.size );
+    uniforms.uSelectorCenter.value.copy( selector.position ).divide( volume.userData.size );
+   
+  });
+
+}
+
+function updateScreenUniformsBrush() {
+
+  screen.userData.monitors.forEach( (monitor) => {
+
+    const uniforms = monitor.material.uniforms;
+
+    uniforms.uBrushVisible.value = brush.visible;
+    uniforms.uBrushColor.value.setFromColor( brush.material.color );
+    uniforms.uBrushRadius.value = brush.userData.sphere.radius * display.getWorldScale( _scale ).x;
+    
+    brush.getWorldPosition( uniforms.uBrushCenter.value );
+
   });
 
 }
@@ -1117,17 +1156,7 @@ function updateBrush () {
 
   }     
 
-  // update screen uniforms
-  screen.userData.monitors.forEach( (monitor) => {
-
-    const uniforms = monitor.material.uniforms;
-
-    uniforms.uBrushVisible.value = brush.visible;
-    uniforms.uBrushColor.value.setFromColor( brush.material.color );
-    uniforms.uBrushRadius.value = brush.userData.sphere.radius * display.getWorldScale( _scale ).x;
-    uniforms.uBrushCenter.value.copy( brush.getWorldPosition( _position ) );
-
-  });
+  updateScreenUniformsBrush();  
 
 }
 
@@ -1214,8 +1243,8 @@ function setupSelectorVertices () {
     visible: true, 
     transparent: true,
     opacity: 0.5,
-    depthTest: false,
-    depthWrite: false,
+    depthTest: true,
+    depthWrite: true,
 
   });
   
@@ -1267,8 +1296,8 @@ function setupSelectorFaces () {
     visible: true, 
     transparent: true,
     opacity: 0.5,
-    depthTest: false,
-    depthWrite: false,
+    depthTest: true,
+    depthWrite: true,
 
   });
   
@@ -1295,6 +1324,8 @@ function updateSelector () {
   updateSelectorObb();
   updateSelectorVertices();
   updateSelectorFaces();
+
+  updateScreenUniformsSelector();
 
 }
 
@@ -1760,7 +1791,7 @@ function onTwist ( event ) {
   if ( display.userData.modes[0] === 'Place') rollDisplay( event );
   if ( display.userData.modes[0] === 'Inspect') rollScreen( event );
   if ( display.userData.modes[0] === 'Edit') contrastScreen( event );
-  if ( display.userData.modes[0] === 'Segment' ) ;
+  if ( display.userData.modes[0] === 'Segment' ) rollDisplay;
 
 }
   
@@ -2793,55 +2824,68 @@ function moveSelectorVertex ( event ) {
 
   if ( event.start ) {
 
-    data.selected = intersectSelectorVertices( gestures.raycasters.handRay[0] )[0];
+    data.intersection = intersectSelectorVertices( gestures.raycasters.handRay[0] )[0];
 
-    if ( data.selected ) {
-      
-      const point = data.selected.object.getWorldPosition( new THREE.Vector3() ); // world coordinate system
-      data.hitPlane = new THREE.Plane().setFromNormalAndCoplanarPoint( gestures.raycasters.viewRay.direction, point ); // world coordinate system
-
-      data.point = display.worldToLocal( point ); // display local coordinates
-      data.point0 = data.point.clone(); // display local coordinates
-
-      const center = selector.position.clone(); // display local coordinates
-      const halfDiagonal = new THREE.Vector3().subVectors( data.point0, center ); // display local coordinates
-      data.antipodal0 = new THREE.Vector3().subVectors( center, halfDiagonal ); // display local coordinates
+  }
   
-      data.scale = selector.scale.clone(); // display local coordinates
-      data.scale0 = selector.scale.clone(); // display local coordinates
+  if ( event.start && data.intersection ) {
 
-      data.size = new THREE.Vector3().subVectors( data.point0, data.antipodal0 );  // display local coordinate
-      applyVectorFunction( data.size, Math.abs );  // display local coordinate
+    // display local coordinate system
 
-      data.size0 = data.size.clone();  // display local coordinate
-
-      data.position = selector.position.clone(); // display local coordinates
- 
+    data.selector = {
+      scale0:    new THREE.Vector3().copy( selector.scale ),   
+      position0: new THREE.Vector3().copy( selector.position ),
     }
-   
+
+    data.matrices = {
+      w: new THREE.Matrix4().copy( display.matrixWorld ).invert(), // world -> display coordinate system transformation
+      m: new THREE.Matrix4().copy( selector.matrix ), // selector -> display coordinate system transformation
+    }
+
+    data.points = {
+      o:  new THREE.Vector3().copy( data.intersection.object.position ).applyMatrix4( data.matrices.m ), // selected face sphere center
+      p:  new THREE.Vector3().copy( data.intersection.point ).applyMatrix4( data.matrices.w ), // intersection point of selected face sphere and hand ray
+      q:  new THREE.Vector3(), // later intersection point of plane with hand ray
+    };
+
+    data.vectors = {
+      op: new THREE.Vector3().subVectors( data.points.p, data.points.o ),
+      pq: new THREE.Vector3(),
+    }
+
+    data.shapes = {
+      object3D: new THREE.Object3D(),
+    }
+
+    // world coordinates
+    data.shapes.object3D.position.copy( data.intersection.point );
+    gestures.controller[0].attach( data.shapes.object3D ); 
+
   }
 
-  if ( event.current && data.selected ) {
+  if ( event.current && data.intersection ) {
 
-    // update hit plane 
-    data.hitPlane.normal.copy( gestures.raycasters.viewRay.direction );
+    // update point position
+    data.shapes.object3D.getWorldPosition( data.points.q ).applyMatrix4( data.matrices.w );
 
-    gestures.raycasters.handRay[0].intersectPlane( data.hitPlane, data.point );  // world coordinate system
-    display.worldToLocal( data.point ); // display local coordinates
+    // get intersection vector
+    data.vectors.pq.subVectors( data.points.q, data.points.p );
 
-    data.size.subVectors( data.point, data.antipodal0 ); // display local coordinates
-    applyVectorFunction( data.size, Math.abs );  // display local coordinate
+    // update selector position  
+    selector.position.copy( data.selector.position0 ).addScaledVector( data.vectors.pq, 0.5 );
+    
+    // update selector scale
+    selector.scale.copy( data.selector.scale0 ).add( data.vectors.pq );
+    applyVectorFunction( selector.scale, Math.abs );
 
-    data.position.addVectors( data.point, data.antipodal0 ).divideScalar( 2 ); // display local coordinates
-
-    selector.scale.copy( data.size );
-    selector.position.copy( data.position );
-
+    // update selector
     updateSelector();
-
+    
   }
 
   if ( event.end ) {
+
+    gestures.controller[0].remove( data.shapes.object3D ); 
 
     data = {};
 
@@ -2857,41 +2901,41 @@ function moveSelectorFace ( event ) {
 
     data.intersection = intersectSelectorFaces( gestures.raycasters.handRay[0] )[0];
 
-    if ( data.intersection ) {
-      
-      // display local coordinate system
+  }
 
-      data.selector = {
-        scale0:    new THREE.Vector3().copy( selector.scale ),   
-        position0: new THREE.Vector3().copy( selector.position ),
-      }
+  if ( event.start && data.intersection ) {
 
-      data.matrices = {
-        w: new THREE.Matrix4().copy( display.matrixWorld ).invert(), // world -> display coordinate system transformation
-        m: new THREE.Matrix4().copy( selector.matrix ), // selector -> display coordinate system transformation
-      }
+    // display local coordinate system
 
-      data.points = {
-        o:  new THREE.Vector3().copy( data.intersection.object.position ).applyMatrix4( data.matrices.m ), // selected face sphere center
-        p:  new THREE.Vector3().copy( data.intersection.point ).applyMatrix4( data.matrices.w ), // intersection point of selected face sphere and hand ray
-        q:  new THREE.Vector3(), // later intersection point of plane with hand ray
-      };
+    data.selector = {
+      scale0:    new THREE.Vector3().copy( selector.scale ),   
+      position0: new THREE.Vector3().copy( selector.position ),
+    }
 
-      data.vectors = {
-        n:  new THREE.Vector3(),
-        d:  new THREE.Vector3().subVectors( data.points.o, data.selector.position0 ).normalize(), // direction normal of selector box face
-        op: new THREE.Vector3().subVectors( data.points.p, data.points.o ),
-        pq: new THREE.Vector3(),
-      }
+    data.matrices = {
+      w: new THREE.Matrix4().copy( display.matrixWorld ).invert(), // world -> display coordinate system transformation
+      m: new THREE.Matrix4().copy( selector.matrix ), // selector -> display coordinate system transformation
+    }
 
-      data.vectors.n.copy( gestures.raycasters.viewRay.direction ).transformDirection( data.matrices.w ).projectOnPlane( data.vectors.d ).normalize();
+    data.points = {
+      o:  new THREE.Vector3().copy( data.intersection.object.position ).applyMatrix4( data.matrices.m ), // selected face sphere center
+      p:  new THREE.Vector3().copy( data.intersection.point ).applyMatrix4( data.matrices.w ), // intersection point of selected face sphere and hand ray
+      q:  new THREE.Vector3(), // later intersection point of plane with hand ray
+    };
 
-      data.shapes = {
-        plane: new THREE.Plane().setFromNormalAndCoplanarPoint( data.vectors.n, data.points.p ), // intersection plane centered at point 
-        ray:   new THREE.Ray().copy( gestures.raycasters.handRay[0] ).applyMatrix4( data.matrices.w ), // intersection hand ray in local coordinates
-        line:  new THREE.Line3().set( data.points.p, data.points.p.clone().add( data.vectors.d ) ), // projection line to the direction of face
-      }
- 
+    data.vectors = {
+      n:  new THREE.Vector3(),
+      d:  new THREE.Vector3().subVectors( data.points.o, data.selector.position0 ).normalize(), // direction normal of selector box face
+      op: new THREE.Vector3().subVectors( data.points.p, data.points.o ),
+      pq: new THREE.Vector3(),
+    }
+
+    data.vectors.n.copy( gestures.raycasters.viewRay.direction ).transformDirection( data.matrices.w ).projectOnPlane( data.vectors.d ).normalize();
+
+    data.shapes = {
+      plane: new THREE.Plane().setFromNormalAndCoplanarPoint( data.vectors.n, data.points.p ), // intersection plane centered at point 
+      ray:   new THREE.Ray().copy( gestures.raycasters.handRay[0] ).applyMatrix4( data.matrices.w ), // intersection hand ray in local coordinates
+      line:  new THREE.Line3().set( data.points.p, data.points.p.clone().add( data.vectors.d ) ), // projection line to the direction of face
     }
 
   }
@@ -2900,33 +2944,29 @@ function moveSelectorFace ( event ) {
 
     // update plane
     data.shapes.plane.normal.copy( gestures.raycasters.viewRay.direction ).transformDirection( data.matrices.w ).projectOnPlane( data.vectors.d ).normalize();
-    // console.log( `plane normal = ${formatVector( data.shapes.plane.normal, 2 )}`);
-    // console.log( `plane constant = ${data.shapes.plane.constant.toFixed( 3 )}`);
-
+  
     // update ray 
     data.shapes.ray.copy( gestures.raycasters.handRay[0] ).applyMatrix4( data.matrices.w );
-    // console.log( `ray direction = ${formatVector( data.shapes.ray.direction, 2 )}`);  
-    // console.log( `ray origin = ${formatVector( data.shapes.ray.origin, 2 )}`);  
-
+   
     // intersect ray with plane
     data.shapes.ray.intersectPlane( data.shapes.plane, data.points.q );
-    // console.log( `q = ${formatVector( data.points.q,  2 )}`)
 
     if ( data.points.q ) {
 
       // project point to line
       data.shapes.line.closestPointToPoint( data.points.q, false, data.points.q ); 
-      // console.log( `q = ${formatVector( data.points.q,  2 )}`)
 
       // get intersection vector
       data.vectors.pq.subVectors( data.points.q, data.points.p );
-      // console.log( `pq = ${formatVector( data.vectors.pq, 3 ) }` )
 
-      // update selector
+      // update selector position  
       selector.position.copy( data.selector.position0 ).addScaledVector( data.vectors.pq, 0.5 );
+      
+      // update selector scale
       selector.scale.copy( data.selector.scale0 ).add( data.vectors.pq );
       applyVectorFunction( selector.scale, Math.abs );
 
+      // update selector
       updateSelector();
       
     }    
@@ -2940,7 +2980,6 @@ function moveSelectorFace ( event ) {
   }
 
 }
-
 
 // helpers
 
