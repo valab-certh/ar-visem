@@ -29,3 +29,9 @@ cd docs/ && make clean
 ```bash
 cd docs/ && make STAGING=1
 ```
+
+### Improvements
+```bash
+1. Lower the frame rate of the editMask function using setInterval()
+2. Make shader code more readable by having only one coordinate system
+```

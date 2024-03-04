@@ -11,6 +11,10 @@ uniform mat4 uMatrix;
 uniform vec4 uPlaneHessian[3];
 uniform bool uPlaneVisible[3];
 
+// selector uniforms
+
+
+// mask uniforms
 uniform sampler3D uMaskMap;
 uniform vec3 uTextelSize;
 uniform vec3 uBoxMin;

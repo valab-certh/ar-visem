@@ -40,7 +40,6 @@ let pointer, raycaster, gestures, reticle; // helper objects
 let hitTestSource, hitTestSourceRequested, hitTestResult; // parameters AR
 
 
-
 main();
 
 function main () {
@@ -152,7 +151,7 @@ function setupGui () {
   folders[0].add( buttons[0], 'click' ).name('Upload Volume');  
   buttons[0].addEventListener( 'change', (event) => onVolumeUpload( event ) );  
     
-  // maskS
+  // mask
 
   folders[1] = gui.addFolder('Mask');
 
@@ -160,7 +159,7 @@ function setupGui () {
   folders[1].add( buttons[1], 'click' ).name('Upload Mask'); 
   buttons[1].addEventListener( 'change', (event) => onMaskUpload( event ) );
 
-  folders[1].add( { fun: saveMask }, 'fun' ).name('Download Mask'); 
+  folders[1].add( { action: onMaskDownload }, 'action' ).name('Download Mask'); 
 
 }
 
@@ -306,6 +305,7 @@ function setupDisplay () {
 
   display.visible = false;
   display.matrixAutoUpdate = false;
+
   display.userData.modes = [ 'Place', 'Inspect', 'Edit', 'Segment', ];
   display.userData.history = [];
   display.userData.future = [];
@@ -479,7 +479,7 @@ function updateUI () {
     container.material.opacity = 0.0;   
     container.userData.outline.visible = false;
 
-    model.visible = true;
+    model.visible = false;
     model.material.uniforms.uModelAlpha.value = 0.4;
     model.material.uniforms.uModelAlphaClip.value = 0.4;
 
@@ -499,7 +499,6 @@ function updateUI () {
 
     });  
   }
-
   
 }
 
@@ -1187,6 +1186,8 @@ function setupSelector () {
   selector.geometry.computeBoundingBox();
   selector.userData.pointLength = boxSize.length() * 0.04;
   selector.userData.pointScalar = 2;
+  selector.userData.history = [];
+  selector.userData.future = [];
 
   setupSelectorOutline();
   setupSelectorObb();
@@ -1580,6 +1581,16 @@ function onMaskUpload ( event ) {
 
 function onMaskDownload ( event) {
 
+  const header = mask.userData.raw.slice( 0, 352 );
+  const headerTemp = new Uint16Array( header, 0, header.length );
+  headerTemp[35] = 2; // convert data type to UInt8
+
+  const image = mask.userData.texture.image.data;
+  const data = [ headerTemp, new Uint16Array( image.buffer, 0, image.buffer.length ) ];
+  const fileName = "mask.nii";
+
+  saveData( data, fileName );
+
 }
 
 function onPointerMove ( event ) {
@@ -1712,7 +1723,7 @@ function onSwipe ( event ) {
     if ( display.userData.modes[0] === 'Place'   ) undoDisplay( event );
     if ( display.userData.modes[0] === 'Inspect' ) undoScreen( event );
     if ( display.userData.modes[0] === 'Edit'    ) undoMask( event );
-    if ( display.userData.modes[0] === 'Segment' ) ;
+    if ( display.userData.modes[0] === 'Segment' ) undoSelector( event );
 
 
   }
@@ -1722,7 +1733,7 @@ function onSwipe ( event ) {
     if ( display.userData.modes[0] === 'Place'   ) redoDisplay( event );
     if ( display.userData.modes[0] === 'Inspect' ) redoScreen( event );
     if ( display.userData.modes[0] === 'Edit'    ) redoMask( event );
-    if ( display.userData.modes[0] === 'Segment' ) ;
+    if ( display.userData.modes[0] === 'Segment' ) redoSelector( event );
     
   }
 
@@ -1795,7 +1806,7 @@ function onTwist ( event ) {
   if ( display.userData.modes[0] === 'Place') rollDisplay( event );
   if ( display.userData.modes[0] === 'Inspect') rollScreen( event );
   if ( display.userData.modes[0] === 'Edit') contrastScreen( event );
-  if ( display.userData.modes[0] === 'Segment' ) rollDisplay;
+  if ( display.userData.modes[0] === 'Segment' ) rollDisplay( event );
 
 }
   
@@ -1832,16 +1843,6 @@ function unshiftMode ( event ) {
   display.userData.modes.unshift( display.userData.modes.pop() );
 
   updateUI();
-
-}
-
-function saveDisplay ( event ) {
-
-  display.updateMatrix();
-
-  const record = { matrix: display.matrix.clone() };
-
-  display.userData.history.unshift( record );
 
 }
 
@@ -2042,6 +2043,16 @@ function resetDisplay ( event ) {
   
 }
 
+function saveDisplay ( event ) {
+
+  display.updateMatrix();
+
+  const record = { matrix: display.matrix.clone() };
+
+  display.userData.history.unshift( record );
+
+}
+
 function undoDisplay ( event ) {
 
   display.updateMatrix();
@@ -2080,21 +2091,6 @@ function redoDisplay ( event ) {
 }
 
 // screen gesture actions
-
-function saveScreen ( event ) {
-
-  screen.updateMatrix();
-
-  const record = { 
-
-    matrix: screen.matrix.clone(),
-    visible: screen.userData.monitors.map( (monitor) => monitor.material.uniforms.uPlaneVisible.value ),
-
-  };
-
-  screen.userData.history.unshift( record );
-
-}
 
 function moveScreen ( event ) {
 
@@ -2242,6 +2238,21 @@ function resetScreen ( event ) {
 
   updateDisplay();
   
+}
+
+function saveScreen ( event ) {
+
+  screen.updateMatrix();
+
+  const record = { 
+
+    matrix: screen.matrix.clone(),
+    visible: screen.userData.monitors.map( (monitor) => monitor.material.uniforms.uPlaneVisible.value ),
+
+  };
+
+  screen.userData.history.unshift( record );
+
 }
 
 function undoScreen ( event ) {
@@ -2484,7 +2495,6 @@ function rotateScreenMonitor ( event ) {
 function editMask ( event ) {
 
   let data = event.userData;
-  console.log( data );
 
   if ( event.start ) {
 
@@ -2749,12 +2759,18 @@ function resizeBrush ( event ) {
 
 // selector gesture actions 
 
+async function segmentSelector ( event ) {
+
+}
+
 function resizeSelector ( event ) {
 
   let data = event.userData;
 
   if ( event.start ) {
   
+    saveSelector( event );
+
     data.scale0 = selector.scale.clone();    
     data.scalar = 1;
 
@@ -2778,21 +2794,13 @@ function resizeSelector ( event ) {
 
 }
 
-function resetSelector ( event ) {
-
-  selector.position.set( 0, 0, 0 );
-  selector.scale.copy( volume.userData.size );
-  selector.updateMatrix();
-
-  updateSelector();  
-  
-}
-
 function moveSelectorObb ( event ) {
 
   let data = event.userData;
 
   if ( event.start ){
+
+    saveSelector( event );
 
     data.point = new THREE.Points();
 
@@ -2833,6 +2841,8 @@ function moveSelectorVertex ( event ) {
   }
   
   if ( event.start && data.intersection ) {
+
+    saveSelector( event );
 
     // display local coordinate system
 
@@ -2909,6 +2919,8 @@ function moveSelectorFace ( event ) {
   }
 
   if ( event.start && data.intersection ) {
+
+    saveSelector( event );
 
     // display local coordinate system
 
@@ -2987,6 +2999,68 @@ function moveSelectorFace ( event ) {
 
 }
 
+function resetSelector ( event ) {
+
+  saveSelector( event );
+
+  selector.position.set( 0, 0, 0 );
+  selector.scale.copy( volume.userData.size );
+  selector.updateMatrix();
+
+  updateSelector();  
+  
+}
+
+function saveSelector ( event ) {
+
+  selector.updateMatrix();
+
+  const record = { 
+    matrix: selector.matrix.clone(),
+  };
+
+  selector.userData.history.unshift( record );
+
+}
+
+function undoSelector ( event ) {
+
+  selector.updateMatrix();
+
+  const record = { matrix: selector.matrix.clone() };
+
+  selector.userData.future.unshift( record );
+
+  if ( selector.userData.history.length > 0) {
+
+    selector.matrix.copy( selector.userData.history.shift().matrix );
+    selector.matrix.decompose( selector.position, selector.quaternion, selector.scale ); 
+
+    updateSelector();
+
+  }
+  
+}
+
+function redoSelector ( event ) {
+
+  selector.updateMatrix();
+
+  const record = { matrix: selector.matrix.clone() };
+  selector.userData.history.unshift( record );
+
+  if ( selector.userData.future.length > 0) {
+
+    selector.matrix.copy( selector.userData.future.shift().matrix );
+    selector.matrix.decompose( selector.position, selector.quaternion, selector.scale ); 
+
+    updateSelector();
+
+  }
+
+}
+
+
 // helpers
 
 async function loadShader ( url ) {
@@ -3058,20 +3132,6 @@ function loadRawNIFTI ( file ) {
     }
 		  
   });
-
-}
-
-function saveMask () {
-
-  const header = mask.userData.raw.slice( 0, 352 );
-  const headerTemp = new Uint16Array( header, 0, header.length );
-  headerTemp[35] = 2; // convert data type to UInt8
-
-  const image = mask.userData.texture.image.data;
-  const data = [ headerTemp, new Uint16Array( image.buffer, 0, image.buffer.length ) ];
-  const fileName = "mask.nii";
-
-  saveData( data, fileName );
 
 }
 
@@ -3164,30 +3224,6 @@ function positionToAxis ( position ) {
 
   // return the axis in world coordinates
   return axis;
-}
-
-function getGeometryVertices ( geometry ) {
-
-  let vertices = new Array( geometry.attributes.position.count ).fill().map( () => new THREE.Vector3() );
-
-  // get geometry vertices
-  for ( let i = 0; i < geometry.attributes.position.count; i++ ) {
-
-    vertices[i].fromBufferAttribute( geometry.attributes.position, i );
-  
-  }
-
-  // remove duplicates
-  vertices = vertices.filter( (vector0, i) => {
-
-    // return ! vertices.slice( i + 1 ).some( (vector1) => vector1.equals(vector0) );
-    return ! vertices.slice( i + 1 ).some( (vector1) => vector1.distanceTo(vector0) < 1e-6 );
-
-
-  });
-
-  return vertices;
-
 }
 
 function transformVector ( fun, vector ) {
