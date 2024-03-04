@@ -411,7 +411,8 @@ function updateUI () {
 
       const uniforms = monitor.material.uniforms;
       uniforms.uPlaneAlpha.value = 1.0;     
-      uniforms.uBrushVisible.value = false;
+      uniforms.uBrushVisible.value = brush.visible;
+      uniforms.uSelectorVisible.value = selector.visible;
 
     });  
 
@@ -437,7 +438,8 @@ function updateUI () {
 
       const uniforms = monitor.material.uniforms;
       uniforms.uPlaneAlpha.value = 1.0;     
-      uniforms.uBrushVisible.value = false;
+      uniforms.uBrushVisible.value = brush.visible;
+      uniforms.uSelectorVisible.value = selector.visible;
 
     });  
 
@@ -465,7 +467,8 @@ function updateUI () {
 
       const uniforms = monitor.material.uniforms;
       uniforms.uPlaneAlpha.value = isSelected ? 1.0 : 0.6;
-      uniforms.uBrushVisible.value = true;   
+      uniforms.uBrushVisible.value = brush.visible;
+      uniforms.uSelectorVisible.value = selector.visible;
 
     });  
 
@@ -492,6 +495,7 @@ function updateUI () {
       const uniforms = monitor.material.uniforms;
       uniforms.uPlaneAlpha.value = 1.0;     
       uniforms.uBrushVisible.value = brush.visible;
+      uniforms.uSelectorVisible.value = selector.visible;
 
     });  
   }
@@ -1244,7 +1248,7 @@ function setupSelectorVertices () {
     transparent: true,
     opacity: 0.5,
     depthTest: true,
-    depthWrite: true,
+    depthWrite: false,
 
   });
   
@@ -1255,7 +1259,7 @@ function setupSelectorVertices () {
     selector.userData.vertices[i] = new THREE.Mesh( geometry, material ); 
     selector.userData.vertices[i].position.copy( positions[i] );
     selector.userData.vertices[i].matrixAutoUpdate = false;
-    selector.userData.vertices[i].renderOrder = selector.renderOrder;
+    selector.userData.vertices[i].renderOrder = selector.renderOrder - 0.5;
 
     selector.userData.vertices[i].userData.sphere = new THREE.Sphere( new THREE.Vector3(), radiusExpand );
     selector.userData.vertices[i].userData.sphere0 = selector.userData.vertices[i].userData.sphere.clone();
@@ -1296,8 +1300,8 @@ function setupSelectorFaces () {
     visible: true, 
     transparent: true,
     opacity: 0.5,
-    depthTest: true,
-    depthWrite: true,
+    depthTest: false,
+    depthWrite: false,
 
   });
   
@@ -1308,7 +1312,7 @@ function setupSelectorFaces () {
     selector.userData.faces[i] = new THREE.Mesh( geometry, material ); 
     selector.userData.faces[i].position.copy( positions[i] );
     selector.userData.faces[i].matrixAutoUpdate = false;
-    selector.userData.faces[i].renderOrder = selector.renderOrder;
+    selector.userData.faces[i].renderOrder = selector.renderOrder - 0.5;
 
     selector.userData.faces[i].userData.sphere = new THREE.Sphere( new THREE.Vector3(), radiusExpand );
     selector.userData.faces[i].userData.sphere0 = selector.userData.faces[i].userData.sphere.clone();
@@ -1412,7 +1416,7 @@ function intersectSelectorVertices ( rayOrOrigin, direction ) {
 
     let vertex = selector.userData.vertices[i];
 
-    points.push( raycaster.ray.intersectSphere( vertex.userData.sphere, _position ) );
+    points.push( raycaster.ray.intersectSphere( vertex.userData.sphere, new THREE.Vector3() ) );
 
     indices.push( i );
 
@@ -1478,7 +1482,7 @@ function intersectSelectorFaces ( rayOrOrigin, direction ) {
 
     let face = selector.userData.faces[i];
 
-    points.push( raycaster.ray.intersectSphere( face.userData.sphere, _position ) );
+    points.push( raycaster.ray.intersectSphere( face.userData.sphere, new THREE.Vector3() ) );
 
     indices.push( i );
 
@@ -2849,6 +2853,7 @@ function moveSelectorVertex ( event ) {
     };
 
     data.vectors = {
+      s:  new THREE.Vector3().copy( transformVector( Math.sign, data.points.o.clone() ) ),
       op: new THREE.Vector3().subVectors( data.points.p, data.points.o ),
       pq: new THREE.Vector3(),
     }
@@ -2875,8 +2880,8 @@ function moveSelectorVertex ( event ) {
     selector.position.copy( data.selector.position0 ).addScaledVector( data.vectors.pq, 0.5 );
     
     // update selector scale
+    data.vectors.pq.multiply( data.vectors.s );
     selector.scale.copy( data.selector.scale0 ).add( data.vectors.pq );
-    applyVectorFunction( selector.scale, Math.abs );
 
     // update selector
     updateSelector();
@@ -2925,6 +2930,7 @@ function moveSelectorFace ( event ) {
 
     data.vectors = {
       n:  new THREE.Vector3(),
+      s:  new THREE.Vector3().copy( transformVector( Math.sign, data.points.o.clone() ) ),
       d:  new THREE.Vector3().subVectors( data.points.o, data.selector.position0 ).normalize(), // direction normal of selector box face
       op: new THREE.Vector3().subVectors( data.points.p, data.points.o ),
       pq: new THREE.Vector3(),
@@ -2957,14 +2963,14 @@ function moveSelectorFace ( event ) {
       data.shapes.line.closestPointToPoint( data.points.q, false, data.points.q ); 
 
       // get intersection vector
-      data.vectors.pq.subVectors( data.points.q, data.points.p );
+      data.vectors.pq.subVectors( data.points.q, data.points.p );    
 
       // update selector position  
       selector.position.copy( data.selector.position0 ).addScaledVector( data.vectors.pq, 0.5 );
-      
+
       // update selector scale
+      data.vectors.pq.multiply( data.vectors.s );
       selector.scale.copy( data.selector.scale0 ).add( data.vectors.pq );
-      applyVectorFunction( selector.scale, Math.abs );
 
       // update selector
       updateSelector();
@@ -3184,7 +3190,7 @@ function getGeometryVertices ( geometry ) {
 
 }
 
-function applyVectorFunction ( vector, fun ) {
+function transformVector ( fun, vector ) {
 
   vector.set(
 
@@ -3193,6 +3199,8 @@ function applyVectorFunction ( vector, fun ) {
     fun( vector.z ),
     
   )
+
+  return vector;
   
 }
 
