@@ -5,7 +5,6 @@ import { XRGestures }         from './prm/XRGestures.js'
 import { OBB }                from 'three/addons/math/OBB.js'
 import { ARButton }           from 'three/addons/webxr/ARButton.js'
 import { OrbitControls }      from "three/addons/controls/OrbitControls.js"
-import { TransformControls }  from 'three/addons/controls/TransformControls.js'
 
 // place holder variables
 const _vector     = new THREE.Vector3();
@@ -31,11 +30,11 @@ const vertexModel = await loadShader('./prm/vertex_model.glsl');
 const fragmentModel = await loadShader('./prm/fragment_model.glsl');
 
 // global objects
-let camera, scene, renderer, canvas, orbitControls, transformControls; // scene objects
+let camera, scene, renderer, canvas, orbitControls; // scene objects
 
 let display, container, screen, model, brush, volume, mask, selector; // main objects
 
-let pointer, raycaster, gestures, reticle; // helper objects
+let raycaster, gestures, reticle; // helper objects
 
 let hitTestSource, hitTestSourceRequested, hitTestResult; // parameters AR
 
@@ -57,13 +56,15 @@ function setupObjects () {
 
   display   = new THREE.Object3D();
   screen    = new THREE.Object3D();
+
   container = new THREE.Mesh();
   model     = new THREE.Mesh();
   brush     = new THREE.Mesh();
-  reticle   = new THREE.Mesh();
   selector  = new THREE.Mesh();
-  pointer   = new THREE.Vector2();
+  reticle   = new THREE.Mesh();
+
   raycaster = new THREE.Raycaster();
+
   volume    = { userData: {} };
   mask      = { userData: {} };
   
@@ -97,15 +98,7 @@ function setupScene () {
 
   orbitControls = new OrbitControls( camera, canvas );
   orbitControls.target.set( 0, 0, 0 );
-  orbitControls.update();
-
-  // transform
-
-  transformControls = new TransformControls( camera, canvas );
-  transformControls.addEventListener( 'dragging-changed', (event) => orbitControls.enabled = !event.value); 
-  transformControls.attach( screen );
-  transformControls.visible = false;
-  transformControls.enabled = false;   
+  orbitControls.update(); 
  
   // scene
 
@@ -115,25 +108,27 @@ function setupScene () {
 
   scene.add( camera )
   scene.add( display );
-  scene.add( transformControls );
+  scene.add( reticle );
 
-  display.add( container );
   display.add( screen );
   display.add( model );
-  display.add( brush );
   display.add( selector);
-
-  setupDisplay();
+  display.add( brush );
+  display.add( container );
 
   // render order
 
-  [ reticle, screen, model, selector, brush, container, ].forEach( (object3D, i) => object3D.renderOrder = i );
+  [ reticle, screen, model, selector, brush, container ].forEach( (object3D, i) => object3D.renderOrder = i );
 
   // event listeners
 
-  window.addEventListener( 'resize', onResize );
-  window.addEventListener( 'mousemove', onPointerMove);
-  window.addEventListener( 'keydown', onKeydown );
+  window.addEventListener( 'resize', onResize );  
+  
+  // setup 
+
+  setupDisplay();
+  setupReticle();
+  setupGestures();
 
 }
 
@@ -147,7 +142,7 @@ function setupGui () {
 
   folders[0] = gui.addFolder( 'Volume' );  
 
-  buttons[0] = document.getElementById( 'uploadVolume' ); 
+  buttons[0] = document.getElementById( 'volumeId' ); 
   folders[0].add( buttons[0], 'click' ).name('Upload Volume');  
   buttons[0].addEventListener( 'change', (event) => onVolumeUpload( event ) );  
     
@@ -155,7 +150,7 @@ function setupGui () {
 
   folders[1] = gui.addFolder('Mask');
 
-  buttons[1] = document.getElementById('uploadMask'); 
+  buttons[1] = document.getElementById( 'maskId' ); 
   folders[1].add( buttons[1], 'click' ).name('Upload Mask'); 
   buttons[1].addEventListener( 'change', (event) => onMaskUpload( event ) );
 
@@ -165,13 +160,11 @@ function setupGui () {
 
 function setupButton () {   
 
-  const overlay = document.getElementById( 'overlay-content' )
-  const button = ARButton.createButton(renderer, {
-
+  const overlay = document.getElementById( 'overlay-content' );
+  const button = ARButton.createButton( renderer, {
     requiredFeatures: [ 'hit-test' ],
     optionalFeatures: [ 'dom-overlay' ],
     domOverlay: { root: overlay },     
-
   });
 
   document.body.appendChild( button );     
@@ -181,52 +174,39 @@ function setupButton () {
 
 function updateAnimation ( timestamp, frame ) {
 
-  if ( renderer.xr.isPresenting ) {
 
-    if ( reticle.userData.enabled ) updateHitTest( renderer, frame, onHitTestResultReady, onHitTestResultEmpty, onSessionEnd );
+  if ( renderer.xr.isPresenting ) {
 
     gestures.update();
 
+    if ( reticle.userData.enabled ) {
+      
+      updateHitTest( renderer, frame, onHitTestResultReady, onHitTestResultEmpty, onSessionEnd );
+
+    }
 
   }    
-  
+
   updateDisplay();
 
+
   renderer.render( scene, camera );
-}
-
-function setupAR () {
-  
-  display.visible = false;
-  display.position.set( 0, 0, 0 );
-
-  renderer.xr.enabled = true; 
-  setupGestures();
-
-  hitTestSourceRequested = false;
-  hitTestSource = null;
-
-  setupReticle();
-  reticle.userData.enabled = true;
-  scene.add( reticle );
-
-
 }
   
 function setupReticle () {
 
   const geometry = new THREE.RingGeometry( 0.15, 0.2, 32 ).rotateX( -Math.PI / 2 );
   const material = new THREE.MeshBasicMaterial({ 
-
     color: 0xffffff,
     transparent: true,
     opacity: 0.7,
-
   });
 
   reticle.geometry = geometry;
   reticle.material = material;
-  reticle.matrixAutoUpdate = false;   
+  reticle.visible = false;
+  reticle.matrixAutoUpdate = false;
+  reticle.userData.enabled = false;
 
 }
 
@@ -298,7 +278,6 @@ function updateHitTest ( renderer, frame, onHitTestResultReady, onHitTestResultE
 
 }
 
-
 // display
 
 function setupDisplay () {
@@ -313,10 +292,11 @@ function setupDisplay () {
   setupUniforms();
   setupVolume();
   setupMask();
-  setupContainer(); 
+
   setupScreen();
-  setupBrush();
   setupModel();
+  setupContainer(); 
+  setupBrush();
   setupSelector();
 
   updateUI(); 
@@ -425,7 +405,7 @@ function updateUI () {
 
     model.visible = true;
     model.material.uniforms.uModelAlpha.value = 0.8;
-    model.material.uniforms.uModelAlphaClip.value = 0.0;
+    model.material.uniforms.uModelAlphaClip.value = 0.4;
    
     selector.visible = false;
 
@@ -527,7 +507,6 @@ function setupVolume () {
 }
 
 function updateVolume ( image3D ) { 
-  // image3D is a pixpipe object
 
   // remove negative voxel sizes for compatibility between volume and model
   image3D._metadata.dimensions.forEach( (dimension) => dimension.step = Math.abs(dimension.step) );
@@ -551,17 +530,11 @@ function updateVolume ( image3D ) {
   texture.needsUpdate = true; 
 
   // update user data
+  volume.userData.data0 = image3D.getDataUint8();
   volume.userData.texture = texture;
   volume.userData.samples = samples;
   volume.userData.voxelSize = voxelSize;
   volume.userData.size = size;
-
-  // update screen uniforms
-  screen.userData.monitors.forEach( (monitor) => {
-    const uniforms = monitor.material.uniforms;
-    uniforms.uVolumeMap.value = texture;
-    uniforms.uVolumeSize.value = size;
-  });
 
 }
 
@@ -582,18 +555,18 @@ function setupMask () {
   texture.unpackAlignment = 1;
   texture.needsUpdate = true;
 
-  // update user data
-  mask.userData.history = [];
-  mask.userData.future = [];
+  // update user data 
   mask.userData.data0 = data;
   mask.userData.texture = texture;
   mask.userData.samples = samples;
   mask.userData.size = size;
   mask.userData.voxelSize = voxelSize;
+  mask.userData.history = [];
+  mask.userData.future = [];
+
 }
 
 function updateMask ( image3D ) { 
-  // image3D is a pixpipe object
 
   // remove negative voxel sizes for compatibility between volume and model
   image3D._metadata.dimensions.forEach( (dimension) => dimension.step = Math.abs(dimension.step));
@@ -625,18 +598,36 @@ function updateMask ( image3D ) {
   mask.userData.voxelSize = voxelSize;
   mask.userData.size = size;
 
-  // update screen uniforms  
-  screen.userData.monitors.forEach( (plane) => {
-    const uniforms = plane.material.uniforms;
-    uniforms.uMaskMap.value = texture;
-    uniforms.uMaskSize.value = size;
-  });
+}
 
-  // update model uniforms
-  const uniforms = model.material.uniforms;
-  uniforms.uMaskMap.value = texture;
-  uniforms.uMaskSize.value = size;
-  uniforms.uMaskSamples.value = samples;
+function updateMaskTexture ( array, min, max ) {
+ 
+  if ( array.length !== mask.userData.texture.image.data ) console.error('input array must be the same size as mask');
+
+  const samples = mask.userData.samples;
+
+  for ( let k = min.z; k <= max.z; k++ ) {
+    const offsetK = samples.x * samples.y * k
+
+    for ( let j = min.y; j <= max.y; j++ ) {
+      const offsetJ = samples.x * j 
+
+      for ( let i = min.x; i <= max.x; i++ ) {
+        const n = i + offsetJ + offsetK;
+
+        // update mask texture
+        mask.userData.texture.image.data[n] = array[n];   
+
+      }   
+    }
+  }
+   
+  mask.userData.texture.needsUpdate = true;
+
+}
+
+function updateUniformsBoundingBox() {
+  
 }
 
 // container
@@ -718,57 +709,28 @@ function setupScreen () {
 
     // global parameters
     uNormalize: { value: new THREE.Matrix4() },
-
-    // plane parameters
-    uPlaneIndex: { value: undefined },
-    uPlaneNormal: { value: [0,1,2].map( (i) => new THREE.Vector3() ) },
-    uPlaneOrigin: { value: new THREE.Vector3() },
-    uPlaneVisible: { value: true },   
-    uPlaneAlpha: { value: 1.0 },
-
-    // volume parameters
-    uVolumeSize: { value: volume.userData.size },
-    uVolumeMap: { value: volume.userData.texture },
-
-    // mask parameters
-    uMaskSize: { value: mask.userData.size },
-    uMaskMap: { value: mask.userData.texture },
-
-    // brush parameters
-    uBrushVisible: { value: false },
-    uBrushColor: { value: new THREE.Vector3() },
-    uBrushRadius: { value: 0 },
-    uBrushCenter: { value: new THREE.Vector3() },
-
-    // selector parameters
-    uSelectorVisible: { value: false },
-    uSelectorOpacity: { value: 1.0 },
-    uSelectorColor: { value: new THREE.Vector3() },
-    uSelectorSize: { value: new THREE.Vector3() },
-    uSelectorCenter: { value: new THREE.Vector3() },
-
+ 
     // color parameters
     uBrightness: { value: 0.0 },
     uContrast: { value: 1.2 },
+
   };
 
   const length = 2 * volume.userData.size.length();
   const geometry = [0, 1, 2].map( (i) => new THREE.PlaneGeometry( length, length ) );
   const material = [0, 1, 2].map( (i) => new THREE.ShaderMaterial( {
 
-    glslVersion: THREE.GLSL3,
-
     // shader parameters
     uniforms: THREE.UniformsUtils.clone( uniforms ) ,
     vertexShader: vertexScreen,
     fragmentShader: fragmentScreen,
+    glslVersion: THREE.GLSL3,
 
     // material parameters
     side: THREE.DoubleSide,
     transparent: true,  
     depthWrite: true,
     depthTest: true,
-
   }));
   
   const monitors = [];
@@ -781,34 +743,34 @@ function setupScreen () {
   planes[1] = new THREE.Plane( new THREE.Vector3( 0, 1, 0 ), 0 );
   planes[2] = new THREE.Plane( new THREE.Vector3( 0, 0, 1 ), 0 );
 
-  // update user data
   screen.userData.planes = planes;
+  screen.userData.monitors = monitors;  
 
   // add monitors
-  screen.userData.monitors = monitors;  
   screen.userData.monitors.forEach( (monitor, i) => {
 
     monitor.matrixAutoUpdate = false;
     monitor.updateMatrix();
-
-    // in display coordinates
+    
     const normal = new THREE.Vector3( 0, 0, 1 );
     monitor.userData.plane = new THREE.Plane( normal, 0 ).applyMatrix4( monitor.matrix );
     monitor.userData.plane0 = new THREE.Plane().copy( monitor.userData.plane );
     monitor.userData.index = i;
 
-    const uniforms = monitor.material.uniforms;
-    uniforms.uPlaneIndex.value = i;
-
     screen.add( monitor );
+
   });
+
+  setupScreenUniformsMask();
+  setupScreenUniformsVolume();
+  setupScreenUniformsPlanes();
 
   setupScreenAxis();
   setupScreenCenter();
+
 }
 
 function setupScreenAxis () {
-  // FOR SOME REASON IF SCREEN HAS NON IDENTITY MATRIX AXIS ARE NOT CORRECT
 
   screen.userData.monitors.forEach( (monitor, i) => {
 
@@ -826,7 +788,9 @@ function setupScreenAxis () {
     // add axis to monitor
     monitor.userData.axis = axis;
     screen.add( axis );
+
   });
+
 }
 
 function setupScreenCenter () {
@@ -854,21 +818,18 @@ function updateScreen () {
 
   // update planes
   const origin = screen.getWorldPosition( new THREE.Vector3() );
+
   screen.userData.planes.forEach( (plane, i) => {
+
     const normal = screen.userData.monitors[i].getWorldDirection( new THREE.Vector3() );
     plane.setFromNormalAndCoplanarPoint( normal, origin );
-  });
 
-  // update monitors
-  screen.userData.monitors.forEach( (monitor, i) => {
+    const monitor = screen.userData.monitors[i];
     monitor.userData.plane.copy( monitor.userData.plane0 ).applyMatrix4( screen.matrix );
 
-    const uniforms = monitor.material.uniforms;
-    uniforms.uNormalize.value.copy( display.userData.uNormalize );
-    uniforms.uPlaneNormal.value.forEach( (value, i) => value.copy( display.userData.uPlaneNormal[i] ));
-    uniforms.uPlaneOrigin.value.copy( display.userData.uPlaneOrigin );   
   });
 
+  updateScreenUniformsPlanes();
   updateScreenAxis();
 }
 
@@ -887,38 +848,6 @@ function updateScreenAxis () {
       axis.position.copy( axis.userData.points[0] );
       axis.setLength( axis.userData.points[0].distanceTo( axis.userData.points[1] ), 0.02, 0.01 );
     }    
-  });
-
-}
-
-function updateScreenUniformsSelector() {
-
-  screen.userData.monitors.forEach( (monitor) => {
-
-    const uniforms = monitor.material.uniforms;
-
-    uniforms.uSelectorVisible.value = selector.visible;
-    uniforms.uSelectorOpacity.value = selector.material.opacity;
-    uniforms.uSelectorColor.value.setFromColor( selector.material.color );
-    uniforms.uSelectorSize.value.copy( selector.scale ).divide( volume.userData.size );
-    uniforms.uSelectorCenter.value.copy( selector.position ).divide( volume.userData.size );
-   
-  });
-
-}
-
-function updateScreenUniformsBrush() {
-
-  screen.userData.monitors.forEach( (monitor) => {
-
-    const uniforms = monitor.material.uniforms;
-
-    uniforms.uBrushVisible.value = brush.visible;
-    uniforms.uBrushColor.value.setFromColor( brush.material.color );
-    uniforms.uBrushRadius.value = brush.userData.sphere.radius * display.getWorldScale( _scale ).x;
-    
-    brush.getWorldPosition( uniforms.uBrushCenter.value );
-
   });
 
 }
@@ -982,33 +911,12 @@ function setupModel () {
     uDeNormalize: { value: new THREE.Matrix4() },
     uMatrix: { value: new THREE.Matrix4() },
     uCameraPosition: { value: new THREE.Vector3() },
-
-    // plane uniforms
-    uPlaneHessian: { value: [0, 1, 2].map( (i) => new THREE.Vector4() ) },
-    uPlaneVisible: { value: [0, 1, 2].map( (i) => true ) },
-    uPlaneAlpha: { value: [0, 1, 2].map( (i) => 1.0 ) }, 
-
-    // mask uniforms
-    uMaskMap: { value: mask.userData.texture },
-    uMaskSize: { value: mask.userData.size },
-    uMaskSamples: { value: mask.userData.samples },    
-    uMaskVoxelSize: { value: mask.userData.voxelSize },
-
-    uBoxMax: { value: new THREE.Vector3() },
-    uBoxMin: { value: new THREE.Vector3() },
-
+ 
     // model parameters
     uModelAlpha: { value: 1.0 },
     uModelAlphaClip: { value: 1.0 },     
   };
 
-  uniforms.uTextelSize = { value: new THREE.Vector3( 
-    1 / mask.userData.samples.x, 
-    1 / mask.userData.samples.y, 
-    1 / mask.userData.samples.z
-  )};
-  uniforms.uResolution = { value: uniforms.uTextelSize.value.length() };
-  
   const size = new THREE.Vector3().copy( mask.userData.size );
   const geometry = new THREE.BoxGeometry( ...size.toArray() );
   const material = new THREE.ShaderMaterial({
@@ -1029,7 +937,11 @@ function setupModel () {
   model.geometry = geometry;
   model.material = material;
 
-  computeBoundingBoxModel();
+  setupModelUniforms();
+
+  computeModelBoundingBox();
+  updateModelUniformsBox();
+
 }
   
 function updateModel () {
@@ -1038,14 +950,13 @@ function updateModel () {
   uniforms.uNormalize.value.copy( display.userData.uNormalize );
   uniforms.uDeNormalize.value.copy( display.userData.uDeNormalize );
   uniforms.uCameraPosition.value.copy( display.userData.uCameraPosition ); 
-  uniforms.uPlaneHessian.value.forEach( (value, i) => value.copy( display.userData.uPlaneHessian[i] ));
-  uniforms.uPlaneVisible.value.forEach( (_, i, array) => array[i] = screen.userData.monitors[i].material.uniforms.uPlaneVisible.value );
-  uniforms.uPlaneAlpha.value.forEach( (_, i, array) => array[i] = screen.userData.monitors[i].material.uniforms.uPlaneAlpha.value );   
-
   uniforms.uMatrix.value.copy( display.userData.uMatrix );
+
+  updateModelUniformsPlanes();
+
 }
 
-function computeBoundingBoxModel () {
+function computeModelBoundingBox () {
   
   const samples = mask.userData.samples;
   const voxel = mask.userData.voxelSize;
@@ -1091,10 +1002,6 @@ function computeBoundingBoxModel () {
 
   model.userData.box = box;
 
-  // update uniforms
-  model.material.uniforms.uBoxMin.value.copy( min ).divide( mask.userData.size );
-  model.material.uniforms.uBoxMax.value.copy( max ).divide( mask.userData.size );
-
 }
 
 // brush
@@ -1127,6 +1034,8 @@ function setupBrush () {
 
   brush.userData.box = sphere.getBoundingBox( new THREE.Box3() ).expandByVector( mask.userData.voxelSize ); 
   brush.userData.box0 = brush.userData.box.clone();
+
+  setupScreenUniformsBrush();
 
 }
 
@@ -1199,7 +1108,9 @@ function setupSelector () {
   selector.scale.copy( volume.userData.size );
   selector.updateMatrix();
 
-  updateSelector();
+  // update uniforms
+
+  setupScreenUniformsSelector();
 
 }
 
@@ -1538,6 +1449,256 @@ function intersectsSelector ( rayOrOrigin, direction ) {
 
 }
  
+// uniforms
+
+function setupScreenUniforms() {
+
+  setupScreenUniformsVolume();
+  setupScreenUniformsMask();
+  setupScreenUniformsPlanes();
+  setupScreenUniformsBrush();
+  setupScreenUniformsSelector();
+
+}
+
+function setupScreenUniformsVolume() {
+
+  screen.userData.monitors.forEach( (monitor) => {
+
+    monitor.material.needsUpdate = true;
+    const uniforms = monitor.material.uniforms;
+
+    // static 
+    uniforms.uVolumeSize = { value: volume.userData.size };
+
+    // dynamic
+    uniforms.uVolumeMap = { value:  volume.userData.texture };
+
+
+  });
+
+}
+
+function setupScreenUniformsMask () {
+
+  screen.userData.monitors.forEach( (monitor) => {
+
+    monitor.material.needsUpdate = true;
+    const uniforms = monitor.material.uniforms;
+
+    // static
+    uniforms.uMaskSize = { value: mask.userData.size };
+
+    // dynamic
+    uniforms.uMaskMap = { value: mask.userData.texture };
+
+
+  });
+}
+
+function setupScreenUniformsPlanes() {
+
+  screen.userData.monitors.forEach( (monitor, i) => {
+
+    const uniforms = monitor.material.uniforms;
+
+    // static
+    uniforms.uPlaneIndex = { value: i };
+
+    // dynamic
+    uniforms.uPlaneNormal = { value: [0,1,2].map( (i) => new THREE.Vector3() ) };
+    uniforms.uPlaneOrigin = { value: new THREE.Vector3() };
+    uniforms.uPlaneVisible = { value: true };
+    uniforms.uPlaneAlpha = { value: 1.0 };
+
+  } );
+    
+
+}
+
+function setupScreenUniformsSelector() {
+
+  screen.userData.monitors.forEach( (monitor) => {
+
+    const uniforms = monitor.material.uniforms;
+
+    // static
+    uniforms.uSelectorColor = { value:  selector.material.color };
+    uniforms.uSelectorOpacity = { value: selector.material.opacity };
+
+    // dynamic
+    uniforms.uSelectorVisible = { value : false };
+    uniforms.uSelectorSize = { value: new THREE.Vector3() };
+    uniforms.uSelectorCenter = { value: new THREE.Vector3() };
+
+  } );
+
+}
+
+function setupScreenUniformsBrush () {
+  
+  screen.userData.monitors.forEach( (monitor) => {
+
+    const uniforms = monitor.material.uniforms;
+
+    // dynamic
+    uniforms.uBrushVisible = { value: false };
+    uniforms.uBrushColor = { value: new THREE.Vector3() };
+    uniforms.uBrushRadius = { value: 0 };
+    uniforms.uBrushCenter = { value: new THREE.Vector3() };
+    
+  } );
+   
+}
+
+function setupModelUniforms() {
+
+  setupModelUniformsMask();
+  setupModelUniformsPlanes();
+  setupModelUniformsBox();
+
+}
+
+function setupModelUniformsMask () {
+
+  model.material.needsUpdate = true;
+  const uniforms = model.material.uniforms;
+
+  // static
+  uniforms.uMaskSize = { value: mask.userData.size };
+  uniforms.uMaskSamples = { value: mask.userData.samples };
+  uniforms.uMaskVoxelSize = { value: mask.userData.voxelSize };
+  uniforms.uMaskTexelSize = { value: transformVector( mask.userData.samples.clone(), (x) => 1/x ) };
+  uniforms.uMaskResolution = { value: uniforms.uMaskTexelSize.value.length() };
+
+  // dynamic
+  uniforms.uMaskMap = { value: mask.userData.texture };  
+ 
+};
+
+function setupModelUniformsBox() {
+
+  model.material.needsUpdate = true;
+  const uniforms = model.material.uniforms;
+
+  // dynamic
+  uniforms.uBoxMin = { value: new THREE.Vector3().addScalar( -0.5 ) };
+  uniforms.uBoxMax = { value: new THREE.Vector3().addScalar( +0.5 ) };
+
+}
+
+function setupModelUniformsPlanes() {
+
+  const uniforms = model.material.uniforms;
+
+  // dynamic
+  uniforms.uPlaneHessian = { value: [0, 1, 2].map( (i) => new THREE.Vector4() ) };
+  uniforms.uPlaneVisible = { value: [0, 1, 2].map( (i) => true ) };
+  uniforms.uPlaneAlpha = { value: [0, 1, 2].map( (i) => 1.0 ) };
+
+}
+
+function updateScreenUniforms() {
+
+  updateScreenUniformsMask();
+  updateScreenUniformsPlanes();
+  updateScreenUniformsBrush();
+  updateScreenUniformsSelector();
+
+}
+
+function updateModelUniforms() {
+
+
+
+}
+
+function updateScreenUniformsMask() {
+
+  screen.userData.monitors.forEach( (monitor) => {
+
+    monitor.material.needsUpdate = true;
+    const uniforms = monitor.material.uniforms;
+
+    uniforms.uMaskMap.value = mask.userData.texture;
+   
+  });
+
+}
+
+function updateScreenUniformsSelector() {
+
+  screen.userData.monitors.forEach( (monitor) => {
+
+    const uniforms = monitor.material.uniforms;
+
+    uniforms.uSelectorVisible.value = selector.visible;
+    uniforms.uSelectorSize.value.copy( selector.scale ).divide( volume.userData.size );
+    uniforms.uSelectorCenter.value.copy( selector.position ).divide( volume.userData.size );
+   
+  });
+
+}
+
+function updateScreenUniformsBrush() {
+
+  screen.userData.monitors.forEach( (monitor) => {
+
+    const uniforms = monitor.material.uniforms;
+
+    uniforms.uBrushVisible.value = brush.visible;
+    uniforms.uBrushColor.value.setFromColor( brush.material.color );
+    uniforms.uBrushRadius.value = brush.userData.sphere.radius * display.getWorldScale( _scale ).x;
+    brush.getWorldPosition( uniforms.uBrushCenter.value );
+
+  });
+
+}
+
+function updateScreenUniformsPlanes() {
+  
+  // update monitors
+  screen.userData.monitors.forEach( (monitor, i) => {
+
+    const uniforms = monitor.material.uniforms;
+
+    uniforms.uNormalize.value.copy( display.userData.uNormalize );
+    uniforms.uPlaneNormal.value.forEach( (value, i) => value.copy( display.userData.uPlaneNormal[i] ));
+    uniforms.uPlaneOrigin.value.copy( display.userData.uPlaneOrigin );  
+
+  });
+}
+
+function updateModelUniformsPlanes() {
+
+  const uniforms = model.material.uniforms;
+
+  uniforms.uPlaneHessian.value.forEach( (value, i) => value.copy( display.userData.uPlaneHessian[i] ));
+  uniforms.uPlaneVisible.value.forEach( (_, i, array) => array[i] = screen.userData.monitors[i].material.uniforms.uPlaneVisible.value );
+  uniforms.uPlaneAlpha.value.forEach( (_, i, array) => array[i] = screen.userData.monitors[i].material.uniforms.uPlaneAlpha.value );   
+
+}
+
+function updateModelUniformsMask () {
+
+  model.material.needsUpdate = true;
+  const uniforms = model.material.uniforms;
+
+  uniforms.uMaskMap.value = mask.userData.texture;  
+
+}
+
+function updateModelUniformsBox () {
+
+  model.material.needsUpdate = true;
+  const uniforms = model.material.uniforms;
+
+  uniforms.uBoxMin.value.copy( model.userData.box.min ).divide( mask.userData.size ); 
+  uniforms.uBoxMax.value.copy( model.userData.box.max ).divide( mask.userData.size );
+
+}
+
+
 // events
 
 function onVolumeUpload ( event ) {
@@ -1546,10 +1707,12 @@ function onVolumeUpload ( event ) {
 
     updateVolume( image3D );  
 
-    setupContainer(); 
     setupScreen();
     setupModel();
+    setupContainer(); 
     setupSelector();
+
+    setupScreenUniforms();
 
     updateDisplay();
     updateUI();
@@ -1564,7 +1727,10 @@ function onMaskUpload ( event ) {
   loadNIFTI( event.target.files[0] ).then( (image3D) => {
 
     updateMask( image3D );
+
     setupModel();
+
+    updateScreenUniformsMask();
 
     updateDisplay();
     updateUI();
@@ -1592,68 +1758,28 @@ function onMaskDownload ( event) {
   saveData( data, fileName );
 
 }
-
-function onPointerMove ( event ) {
-
-  // calculate mouse position in normalized device coordinates
-  // (-1 to +1) for both components
-  pointer.x = ( event.clientX / window.innerWidth ) * 2 - 1;
-  pointer.y = - ( event.clientY / window.innerHeight ) * 2 + 1;
-
-}
-  
-function onKeydown ( event ) {
-
-  switch ( event.keyCode ) {
-    case 81: // Q
-      transformControls.setSpace( transformControls.space === 'local' ? 'world' : 'local' );
-      break;
-
-    case 84: // T
-      transformControls.setMode( 'translate' );
-      break;
-
-    case 82: // R
-      transformControls.setMode( 'rotate' );
-      break;
-
-    case 83: // S
-      transformControls.setMode( 'scale' );
-      break;   
-
-    case 187:
-    case 107: // +, =, num+
-      transformControls.setSize( transformControls.size + 0.1 );
-      break;
-
-    case 189:
-    case 109: // -, _, num-
-      transformControls.setSize( Math.max( transformControls.size - 0.1, 0.1 ) );
-      break;
-
-    case 68: // D
-      transformControls.enabled = ! transformControls.enabled;
-      transformControls.visible = ! transformControls.visible;     
-      break;
-
-    case 27: // Esc
-      transformControls.reset(); 
-      break;      
-              
-  } 
-}
   
 function onResize () {
 
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
+
   renderer.setSize( window.innerWidth, window.innerHeight );
 
 }
 
 function onButton ( event ) {
 
-  setupAR();
+  display.visible = false;
+  display.position.set( 0, 0, 0 );
+
+  renderer.xr.enabled = true; 
+
+  reticle.userData.enabled = true;
+
+  hitTestSourceRequested = false;
+  hitTestSource = null;
+
 
 }
 
@@ -1676,13 +1802,14 @@ function onHitTestResultEmpty () {
 
 function onSessionEnd () {
 
+  reticle.visible = false;
   reticle.userData.enabled = false;
-  scene.remove( reticle );
 
   camera.position.set( 1, 0.6, 1 );   
 
   display.position.set( 0, 0, 0 );
   display.userData.modes = [ 'Place', 'Inspect', 'Edit', 'Segment' ];
+
   updateDisplay();
 
 }
@@ -1695,8 +1822,6 @@ function onPolytap ( event ) {
 
   if ( event.numTaps === 1 ) {
 
-    // if ( display.userData.modes[0] === 'Edit') editMask( event );
-
   }
 
   if ( event.numTaps === 2 ) {
@@ -1704,7 +1829,7 @@ function onPolytap ( event ) {
     if ( display.userData.modes[0] === 'Place' ) placeDisplay( event );
     if ( display.userData.modes[0] === 'Inspect' ) hideScreenMonitor( event );
     if ( display.userData.modes[0] === 'Edit' ) toggleBrush( event );
-    if ( display.userData.modes[0] === 'Segment' ) ;
+    if ( display.userData.modes[0] === 'Segment' ) updateSegmentation( event );
 
 
   }
@@ -2516,7 +2641,6 @@ function editMask ( event ) {
 
     // data.bounds.copy(  brush.userData.box );
     data.bounds = projectBoxOnPlane( brush.userData.box, brush.userData.plane );
-
     data.bounds.min = positionToSample( data.bounds.min ).subScalar( 1 );
     data.bounds.max = positionToSample( data.bounds.max ).addScalar( 1 );
     
@@ -2556,25 +2680,13 @@ function editMask ( event ) {
   
     mask.userData.texture.needsUpdate = true;
 
-    // update model uniforms
-    model.material.uniforms.uMaskMap.value = mask.userData.texture;    
+    // update uniforms
 
-    if ( brush.userData.mode === 'ADD' ) {
-      
-      model.material.uniforms.uBoxMin.value.copy( model.userData.box.min ).divide( mask.userData.size ); 
-      model.material.uniforms.uBoxMax.value.copy( model.userData.box.max ).divide( mask.userData.size );
+    updateScreenUniformsMask();
+    updateModelUniformsMask();
 
-    } 
-    model.material.needsUpdate = true;
+    if ( brush.userData.mode === 'ADD' ) updateModelUniformsBox();
 
-    // update screen uniforms
-    screen.userData.monitors.forEach( (monitor) => {
-
-      monitor.material.uniforms.uMaskMap.value = mask.userData.texture;
-      monitor.material.needsUpdate;
-
-    });
-  
   }
 
   if ( event.end ) {
@@ -2584,10 +2696,8 @@ function editMask ( event ) {
     // update model uniforms
     if ( brush.userData.mode === 'SUB' ) {
 
-      computeBoundingBoxModel();
-
-      model.material.uniforms.uBoxMin.value.copy( model.userData.box.min ).divide( mask.userData.size ); 
-      model.material.uniforms.uBoxMax.value.copy( model.userData.box.max ).divide( mask.userData.size );
+      computeModelBoundingBox();
+      updateModelUniformsBox();
 
     } 
 
@@ -2600,24 +2710,20 @@ function editMask ( event ) {
 function resetMask ( event ) {  
 
   for ( let i = 0; i < mask.userData.data0.length; i++ ) {
+
     mask.userData.texture.image.data[i] = mask.userData.data0[i];
-  } mask.userData.texture.needsUpdate = true;
 
-  // update model uniforms
-  computeBoundingBoxModel();
+  } 
+  
+  mask.userData.texture.needsUpdate = true;
 
-  model.material.uniforms.uMaskMap.value = mask.userData.texture;
-  model.material.uniforms.uBoxMin.value.copy( model.userData.box.min ).divide( mask.userData.size ); 
-  model.material.uniforms.uBoxMax.value.copy( model.userData.box.max ).divide( mask.userData.size );
-  model.material.needsUpdate = true;
+  // update uniforms
 
-  // update screen uniforms
-  screen.userData.monitors.forEach( (monitor) => {
+  updateModelUniformsMask();
+  updateScreenUniformsMask();
 
-    monitor.material.uniforms.uMaskMap.value = mask.userData.texture;
-    monitor.material.needsUpdate = true;
-
-  });
+  computeModelBoundingBox();
+  updateModelUniformsBox();
 
   updateDisplay();
 }
@@ -2643,21 +2749,11 @@ function undoMask ( event ) {
 
     mask.userData.future.unshift( recordCurrent );
     mask.userData.texture.needsUpdate = true;
-
-    // update model uniforms
     model.userData.box.copy( recordPrevious.box );
-    model.material.uniforms.uMaskMap.value = mask.userData.texture;
-    model.material.uniforms.uBoxMin.value.copy( model.userData.box.min ).divide( mask.userData.size ); 
-    model.material.uniforms.uBoxMax.value.copy( model.userData.box.max ).divide( mask.userData.size );
-    model.material.needsUpdate = true;
 
-    // update screen uniforms
-    screen.userData.monitors.forEach( (monitor) => {
-
-      monitor.material.uniforms.uMaskMap.value = mask.userData.texture;
-      monitor.material.needsUpdate = true;
-
-    });
+    updateModelUniformsBox();
+    updateModelUniformsMask();
+    updateScreenUniformsMask();
 
     updateModel();
     updateScreen();
@@ -2685,21 +2781,11 @@ function redoMask ( event ) {
 
     mask.userData.history.unshift( recordCurrent );
     mask.userData.texture.needsUpdate = true;
-
-    // update model uniforms
     model.userData.box.copy( recordNext.box );
-    model.material.uniforms.uMaskMap.value = mask.userData.texture;
-    model.material.uniforms.uBoxMin.value.copy( model.userData.box.min ).divide( mask.userData.size ); 
-    model.material.uniforms.uBoxMax.value.copy( model.userData.box.max ).divide( mask.userData.size );
-    model.material.needsUpdate = true;
 
-    // update screen uniforms
-    screen.userData.monitors.forEach( (monitor) => {
-
-      monitor.material.uniforms.uMaskMap.value = mask.userData.texture;
-      monitor.material.needsUpdate = true;
-
-    });
+    updateModelUniformsBox();
+    updateModelUniformsMask();
+    updateScreenUniformsMask();
 
     updateModel();
     updateScreen();
@@ -2759,7 +2845,36 @@ function resizeBrush ( event ) {
 
 // selector gesture actions 
 
-async function segmentSelector ( event ) {
+async function computeSegmentation() {
+
+  const array = new Uint8Array( mask.userData.data0.length ).fill( 1 );
+  return array;
+
+}
+
+async function updateSegmentation ( event ) {
+
+  if ( event.end ) {
+
+    const array = await computeSegmentation();
+
+    const points = selector.userData.vertices.map( (vertex) => vertex.position.clone().applyMatrix4( selector.matrix ) );
+    const box = new THREE.Box3().setFromPoints( points );
+  
+    const boxMin = positionToSample( box.min );
+    const boxMax = positionToSample( box.max );
+      
+    updateMaskTexture( array, boxMin, boxMax );
+    
+    updateModelUniformsMask();
+    updateScreenUniformsMask();
+  
+    computeModelBoundingBox();   
+    updateModelUniformsBox(); 
+
+    updateDisplay();
+
+  }
 
 }
 
@@ -2863,7 +2978,7 @@ function moveSelectorVertex ( event ) {
     };
 
     data.vectors = {
-      s:  new THREE.Vector3().copy( transformVector( Math.sign, data.points.o.clone() ) ),
+      s:  new THREE.Vector3().copy( transformVector( data.points.o.clone(), Math.sign ) ),
       op: new THREE.Vector3().subVectors( data.points.p, data.points.o ),
       pq: new THREE.Vector3(),
     }
@@ -2942,7 +3057,7 @@ function moveSelectorFace ( event ) {
 
     data.vectors = {
       n:  new THREE.Vector3(),
-      s:  new THREE.Vector3().copy( transformVector( Math.sign, data.points.o.clone() ) ),
+      s:  new THREE.Vector3().copy( transformVector( data.points.o.clone(), Math.sign ) ),
       d:  new THREE.Vector3().subVectors( data.points.o, data.selector.position0 ).normalize(), // direction normal of selector box face
       op: new THREE.Vector3().subVectors( data.points.p, data.points.o ),
       pq: new THREE.Vector3(),
@@ -3226,7 +3341,16 @@ function positionToAxis ( position ) {
   return axis;
 }
 
-function transformVector ( fun, vector ) {
+function formatVector( vector, digits ) {
+
+  let sign = vector.toArray().map( (component) => ( component > 0 ) ? '+' : '-' );
+
+  if ( vector instanceof THREE.Vector2 ) return `(${sign[0] + Math.abs(vector.x).toFixed(digits)}, ${sign[1] + Math.abs(vector.y).toFixed(digits)})`;
+  if ( vector instanceof THREE.Vector3 ) return `(${sign[0] + Math.abs(vector.x).toFixed(digits)}, ${sign[1] + Math.abs(vector.y).toFixed(digits)}, ${sign[2] + Math.abs(vector.z).toFixed(digits)})`;
+
+}
+
+function transformVector ( vector, fun ) {
 
   vector.set(
 
@@ -3240,11 +3364,38 @@ function transformVector ( fun, vector ) {
   
 }
 
-function formatVector( vector, digits ) {
+function transformArray3D ( array, size, box, fun ) {
 
-  let sign = vector.toArray().map( (component) => ( component > 0 ) ? '+' : '-' );
+  let index, offsetX, offsetY, offsetZ;
 
-  if ( vector instanceof THREE.Vector2 ) return `(${sign[0] + Math.abs(vector.x).toFixed(digits)}, ${sign[1] + Math.abs(vector.y).toFixed(digits)})`;
-  if ( vector instanceof THREE.Vector3 ) return `(${sign[0] + Math.abs(vector.x).toFixed(digits)}, ${sign[1] + Math.abs(vector.y).toFixed(digits)}, ${sign[2] + Math.abs(vector.z).toFixed(digits)})`;
+  for ( let k = box.min.z; k <= box.max.z; k++ ) {
+
+    offsetZ = size.x * size.y * k
+
+
+    for ( let j = box.min.y; j <= box.max.y; j++ ) {
+
+      offsetY = size.x * j 
+
+
+      for ( let i = box.min.x; i <= box.max.x; i++ ) {
+
+        offsetX = i;
+
+
+        // linear index
+
+        index = offsetX + offsetY + offsetZ;
+
+        
+        // element wise function
+
+        array[n] = fun(n);
+
+      }   
+    }
+  }
+
+  return array;
 
 }

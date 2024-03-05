@@ -11,12 +11,12 @@ uniform mat4 uMatrix;
 uniform vec4 uPlaneHessian[3];
 uniform bool uPlaneVisible[3];
 
-// selector uniforms
-
-
 // mask uniforms
 uniform sampler3D uMaskMap;
-uniform vec3 uTextelSize;
+uniform vec3 uMaskTexelSize;
+uniform float uMaskResolution;
+
+// model uniforms
 uniform vec3 uBoxMin;
 uniform vec3 uBoxMax;
 
@@ -38,7 +38,7 @@ float getSample( vec3 position ) {
 
 vec3 getNormal( vec3 position ) {
 
-    vec3 offset = uTextelSize;
+    vec3 offset = uMaskTexelSize;
     vec3 deltaInv = 0.5 / offset;
 
     vec3 gradient = vec3(
@@ -55,7 +55,7 @@ vec3 getNormal( vec3 position ) {
 
 float getStep( vec3 dir ) {
 
-    vec3 tMax = uTextelSize / abs( dir ); 
+    vec3 tMax = uMaskTexelSize / abs( dir ); 
     float step = min( tMax.x, min( tMax.y, tMax.z ) );
 
     return step * stepFactor;
