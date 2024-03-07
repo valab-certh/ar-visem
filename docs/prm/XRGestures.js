@@ -169,8 +169,8 @@ class XRGestures extends THREE.EventDispatcher {
 
         this.raycasters = {
 
-            viewRay: new THREE.Ray(),
-            handRay: [ 0, 1 ].map( () => new THREE.Ray() ),
+            view: new THREE.Raycaster(),
+            hand: [ 0, 1 ].map( () => new THREE.Raycaster() ),
 
         }
 
@@ -225,7 +225,7 @@ class XRGestures extends THREE.EventDispatcher {
 
         this.camera.updateMatrix();    
 
-        this.updateViewRay();
+        this.updateViewRaycaster();
 
 
         if ( this.parameters[0].connected ) {
@@ -233,7 +233,7 @@ class XRGestures extends THREE.EventDispatcher {
             this.controller[0].updateMatrix();
 
             this.updateParameters(0);
-            this.updateHandRay(0);
+            this.updateHandRaycaster(0);
 
         }
 
@@ -242,7 +242,7 @@ class XRGestures extends THREE.EventDispatcher {
             this.controller[1].updateMatrix();
 
             this.updateParameters(1);
-            this.updateHandRay(1);
+            this.updateHandRaycaster(1);
         
         }
 
@@ -1142,19 +1142,19 @@ class XRGestures extends THREE.EventDispatcher {
 
     // update raycasters
 
-    updateViewRay() {
+    updateViewRaycaster() {
 
-        this.camera.getWorldPosition( this.raycasters.viewRay.origin );
-        this.camera.getWorldDirection( this.raycasters.viewRay.direction );
+        this.camera.getWorldPosition( this.raycasters.view.ray.origin );
+        this.camera.getWorldDirection( this.raycasters.view.ray.direction );
 
         // console.log(`viewRay.direction = ${formatVector( this.raycasters.viewRay.direction, 2 )} mm`)
 
     }
 
-    updateHandRay( i ) {
+    updateHandRaycaster( i ) {
         
-        this.controller[i].getWorldPosition( this.raycasters.handRay[i].origin );
-        this.controller[i].getWorldDirection( this.raycasters.handRay[i].direction ).negate();
+        this.controller[i].getWorldPosition( this.raycasters.hand[i].ray.origin );
+        this.controller[i].getWorldDirection( this.raycasters.hand[i].ray.direction ).negate();
 
         // console.log(`handRay[${i}].direction = ${formatVector( this.raycasters.handRay[i].direction, 2 )} mm`)
 
