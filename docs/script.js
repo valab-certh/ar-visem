@@ -7,14 +7,16 @@ import { ARButton }           from 'three/addons/webxr/ARButton.js'
 import { OrbitControls }      from "three/addons/controls/OrbitControls.js"
 
 // place holder variables
-const _pointer    = new THREE.Vector2();
-const _vector     = new THREE.Vector3();
+
 const _position   = new THREE.Vector3();
 const _direction  = new THREE.Vector3();
 const _scale      = new THREE.Vector3();  
 const _quaternion = new THREE.Quaternion();
 const _raycaster  = new THREE.Raycaster();
-const _matrix     = new THREE.Matrix4();
+const _vector2    = new THREE.Vector2();
+const _vector3    = new THREE.Vector3();
+const _matrix3    = new THREE.Matrix4();
+const _matrix4    = new THREE.Matrix4();
 const _box        = new THREE.Box3();
 const _points     = new Array( 8 ).fill().map( () => new THREE.Vector3() );
 
@@ -464,7 +466,7 @@ function updateVolume ( image3D ) {
 
   // remove negative voxel sizes for compatibility between volume and model
   image3D._metadata.dimensions.forEach( (dimension) => dimension.step = Math.abs(dimension.step) );
- 
+
   const samples = new THREE.Vector3().fromArray( image3D.getMetadata("dimensions").map( (dimension) => dimension.length ));
   const voxelSize = new THREE.Vector3().fromArray( image3D.getMetadata("dimensions").map( (dimension) => dimension.step * 0.001 )); 
   const size = new THREE.Vector3().fromArray( image3D.getMetadata("dimensions").map( (dimension) => dimension.step * dimension.length * 0.001 ));  
@@ -484,11 +486,23 @@ function updateVolume ( image3D ) {
   texture.needsUpdate = true; 
 
   // update user data
+  volume.userData.image3D = image3D;
   volume.userData.data0 = image3D.getDataUint8();
   volume.userData.texture = texture;
   volume.userData.samples = samples;
   volume.userData.voxelSize = voxelSize;
   volume.userData.size = size;
+
+  // extract image
+
+  const image2D = image3D.getSlice( 'z',  Math.round( image3D.getDimensionSize('z') / 3 ));
+  
+  // get slice does not world correctly on metadata
+  image2D._metadata.min = image3D._metadata.statistics.min;
+  image2D._metadata.max = image3D._metadata.statistics.max;
+  const array = image2D.getDataAsUInt8Array();
+
+  const imageData = convertArrayToImage( array, samples );
 
 }
 
@@ -534,6 +548,7 @@ function updateMask ( image3D ) {
   // update user data
   mask.userData.history = [];
   mask.userData.future = [];
+  mask.userData.image3D = image3D;
   mask.userData.data0 = image3D.getDataUint8();
   mask.userData.texture = texture;
   mask.userData.samples = samples;
@@ -982,13 +997,11 @@ function setupSelector () {
   const boxSize = new THREE.Vector3( 1, 1, 1 );
   selector.geometry = new THREE.BoxGeometry( ...boxSize.toArray() );
   selector.material = new THREE.MeshBasicMaterial( { 
-
     color: 0x0055ff, 
     side: THREE.DoubleSide, 
     visible: true, 
     transparent: true,
     opacity: 0.1,
-
   });
  
   // setup selector objects
@@ -1948,15 +1961,17 @@ function onImplode ( event ) {
 
 // gesture actions
 
-function onGestureAttachObject ( event, object3D ) {
+function onGestureAttachObject ( event, object ) {
   
-  let data = event.userData;
+  if ( event.start ) event.userData.cache = {};
+
+  let data = event.userData.cache;
 
   if ( event.start ){
 
     data.object = new THREE.Object3D();
 
-    object3D.matrixWorld.decompose( data.object.position, data.object.quaternion, data.object.scale )
+    object.matrixWorld.decompose( data.object.position, data.object.quaternion, data.object.scale )
     data.object.updateMatrixWorld( true );
 
     gestures.controller[0].attach( data.object ); 
@@ -1967,11 +1982,11 @@ function onGestureAttachObject ( event, object3D ) {
 
     data.object.updateMatrixWorld( true );
 
-    _matrix.copy( object3D.parent.matrixWorld ).invert();
-    _matrix.multiply( data.object.matrixWorld );
-    _matrix.decompose( object3D.position, object3D.quaternion, object3D.scale );
+    _matrix4.copy( object.parent.matrixWorld ).invert();
+    _matrix4.multiply( data.object.matrixWorld );
+    _matrix4.decompose( object.position, object.quaternion, object.scale );
 
-    object3D.updateMatrix();
+    object.updateMatrix();
     
   } 
   
@@ -1985,13 +2000,15 @@ function onGestureAttachObject ( event, object3D ) {
 
 }
 
-function onGestureResizeObject ( event, object3D ) {
+function onGestureResizeObject ( event, object ) {
 
-  let data = event.userData;
+  if ( event.start ) event.userData.cache = {};
+
+  let data = event.userData.cache;
 
   if ( event.start ) {
   
-    data.scale0 = object3D.scale.clone();    
+    data.scale0 = object.scale.clone();    
     data.scalar = 1;
 
   } 
@@ -2001,8 +2018,8 @@ function onGestureResizeObject ( event, object3D ) {
     data.scalar = gestures.parametersDual.distance / gestures.parametersDual.distance0;
     data.scalar = data.scalar ** 1.5;
 
-    object3D.scale.copy( data.scale0 );
-    object3D.scale.multiplyScalar( data.scalar );
+    object.scale.copy( data.scale0 );
+    object.scale.multiplyScalar( data.scalar );
     
   } 
   
@@ -2016,7 +2033,9 @@ function onGestureResizeObject ( event, object3D ) {
 
 function onGestureTranslateObject ( event, object ) {
   
-  let data = event.userData;
+  if ( event.start ) event.userData.cache = {};
+
+  let data = event.userData.cache;
 
   if ( event.start ){
 
@@ -2047,30 +2066,106 @@ function onGestureTranslateObject ( event, object ) {
 
 }
 
-function onGestureTranslateObjectOnWorldAxis ( event, object, axis ) {
-  // Can not figure out why this does not work
+function onGestureRollObject ( event, object ) {
+  
+  if ( event.start ) event.userData.cache = {};
 
-  let data = event.userData;
+  let data = event.userData.cache;
+
+  if ( event.start ){
+
+    data.angle = 0;
+    data.scalar = 1.2;
+
+    data.axis = new THREE.Vector3();
+    data.quaternion0 = object.quaternion.clone();
+
+  } 
+
+  if ( event.current ) {
+  
+    data.angle = gestures.parametersDual.angleOffset * Math.PI / 180;
+    data.angle = - data.scalar * data.angle; 
+
+    data.axis.copy( gestures.raycasters.view.ray.direction );
+
+    object.quaternion.copy( data.quaternion0 )
+    object.rotateOnWorldAxis( data.axis, data.angle );
+
+  } 
+  
+  if ( event.end ) {
+
+    data = {};
+
+  } 
+
+}
+
+function onGestureTurnObject ( event, object ) {
+
+  if ( event.start ) event.userData.cache = {};
+
+  let data = event.userData.cache;
 
   if ( event.start ) {
 
-    const side = object.material.side;
-    object.material.side = THREE.DoubleSide;
+    data.angle = 0;  // rad
+    data.scalar = Math.PI / 60.0; // rad/mm
 
-    data.intersection = gestures.raycasters.hand[0].intersectObject( object, false )[0];
+    data.axis = new THREE.Vector3();
+    data.xAxis = new THREE.Vector3();
+    data.yAxis = new THREE.Vector3();
+
+    data.quaternion0 = object.quaternion.clone();
+
+  } 
+
+  if ( event.current ) {
+
+    _vector2.copy( gestures.parameters[0].pointerOffset );
+
+    data.angle = data.scalar * _vector2.length();
+
+    data.yAxis.copy( _yAxis );
+    data.xAxis.copy( _xAxis ).negate().transformDirection( camera.matrixWorld );
+
+    data.axis.set( 0, 0, 0 );
+    data.axis.addScaledVector( data.yAxis, _vector2.x );
+    data.axis.addScaledVector( data.xAxis, _vector2.y );
+    data.axis.normalize();
+
+    object.quaternion.copy( data.quaternion0 );
+    object.rotateOnWorldAxis( data.axis, data.angle );
+
+  } 
   
-    object.material.side = side;
+  if ( event.end ) {
+    
+    data = {}; 
 
   }
-    
+
+}
+
+function onGestureTranslateObjectOnWorldAxis ( event, object, axis ) {
+
+  if ( event.start ) event.userData.cache = {};
+
+  let data = event.userData.cache;
+
+  if ( event.start ) {
+
+    data.intersection = gestures.raycasters.hand[0].intersectObject( object, false )[0];
+
+  }
+
   if ( event.start && data.intersection ) {
 
-    data.object = {
-      p0: new THREE.Vector3().copy( object.position ),
-    }
+    object.parent.updateMatrixWorld( true );
 
     data.matrices = {
-      w: new THREE.Matrix4().copy( object.parent.matrixWorld ).invert(),
+      w: new THREE.Matrix3().setFromMatrix4( object.parent.matrixWorld ).invert(),
     }
 
     data.points = {
@@ -2079,12 +2174,15 @@ function onGestureTranslateObjectOnWorldAxis ( event, object, axis ) {
     }
 
     data.vectors = {
-      t:  new THREE.Vector3(),
-      pq: new THREE.Vector3(),
+      t: new THREE.Vector3(),
     }
 
     data.shapes = {
       plane: new THREE.Plane(),
+    }
+
+    data.object = {
+      p0: new THREE.Vector3().copy( object.position ),
     }
 
     data.shapes.plane.normal.copy( gestures.raycasters.view.ray.direction ).projectOnPlane( axis ).normalize();
@@ -2098,11 +2196,10 @@ function onGestureTranslateObjectOnWorldAxis ( event, object, axis ) {
 
     gestures.raycasters.hand[0].ray.intersectPlane( data.shapes.plane, data.points.q );
 
-    data.vectors.pq.subVectors( data.points.q, data.points.p );
+    data.vectors.t.subVectors( data.points.q, data.points.p ).projectOnVector( axis ).applyMatrix3( data.matrices.w );
 
-    data.vectors.t.subVectors( data.points.q, data.points.p ).projectOnVector( axis ).transformDirection( data.matrices.w );
-
-    // object.position.copy( data.object.p0 ).add( data.vectors.t );
+    object.position.copy( data.object.p0 ).add( data.vectors.t );
+    object.updateMatrix();
 
   }
 
@@ -2114,79 +2211,63 @@ function onGestureTranslateObjectOnWorldAxis ( event, object, axis ) {
 
 }
 
-function onGestureRollObject ( event, object3D ) {
-  
-  let data = event.userData;
+function onGestureRotateObjectOnWorldPivot ( event, object, point, direction ) {
 
-  if ( event.start ){
+  if ( event.start ) event.userData.cache = {};
 
-    data.angle = 0;
-    data.scalar = 1.2;
-
-    data.axis = new THREE.Vector3();
-    data.quaternion0 = object3D.quaternion.clone();
-
-  } 
-
-  if ( event.current ) {
-  
-    data.angle = gestures.parametersDual.angleOffset * Math.PI / 180;
-    data.angle = - data.scalar * data.angle; 
-
-    data.axis.copy( gestures.raycasters.view.ray.direction );
-
-    object3D.quaternion.copy( data.quaternion0 )
-    object3D.rotateOnWorldAxis( data.axis, data.angle );
-
-  } 
-  
-  if ( event.end ) {
-
-    data = {};
-
-  } 
-
-}
-
-function onGestureRotateObject ( event, object3D ) {
-
-  let data = event.userData;
-
+  let data = event.userData.cache;
+    
   if ( event.start ) {
 
-    data.angle = 0;  // rad
-    data.scalar = Math.PI / 60.0; // rad/mm
+    data.intersection = gestures.raycasters.hand[0].intersectObject( object, false )[0];
 
-    data.axis = new THREE.Vector3();
-    data.xAxis = new THREE.Vector3();
-    data.yAxis = new THREE.Vector3();
+  }
 
-    data.quaternion0 = object3D.quaternion.clone();
+  if ( event.start && data.intersection ) {
 
-  } 
+    object.parent.updateMatrixWorld( true );
 
-  if ( event.current ) {
+    data.matrices = {
+      w: new THREE.Matrix3().setFromMatrix4( object.parent.matrixWorld ).invert(),
+    }
 
-    _pointer.copy( gestures.parameters[0].pointerOffset );
+    data.points = {
+      p: new THREE.Vector3().copy( data.intersection.point ),
+      q: new THREE.Vector3(),
+    }
 
-    data.angle = data.scalar * _pointer.length();
+    data.vectors = {
+      t: new THREE.Vector3(),
+    }
 
-    data.yAxis.copy( _yAxis );
-    data.xAxis.copy( _xAxis ).negate().transformDirection( camera.matrixWorld );
+    data.shapes = {
+      plane: new THREE.Plane(),
+    }
 
-    data.axis.set( 0, 0, 0 );
-    data.axis.addScaledVector( data.yAxis, _pointer.x );
-    data.axis.addScaledVector( data.xAxis, _pointer.y );
-    data.axis.normalize();
+    data.object = {
+      p0: new THREE.Vector3().copy( object.position ),
+    }
 
-    object3D.quaternion.copy( data.quaternion0 );
-    object3D.rotateOnWorldAxis( data.axis, data.angle );
+    data.shapes.plane.normal.copy( gestures.raycasters.view.ray.direction ).projectOnPlane( axis ).normalize();
+    data.shapes.plane.setFromNormalAndCoplanarPoint( data.shapes.plane.normal, data.points.p );
 
-  } 
-  
+  }
+
+  if ( event.current && data.intersection ) {
+
+    data.shapes.plane.normal.copy( gestures.raycasters.view.ray.direction ).projectOnPlane( axis ).normalize();
+
+    gestures.raycasters.hand[0].ray.intersectPlane( data.shapes.plane, data.points.q );
+
+    data.vectors.t.subVectors( data.points.q, data.points.p ).projectOnVector( axis ).applyMatrix3( data.matrices.m );
+
+    object.position.copy( data.object.p0 ).add( data.vectors.t );
+
+  }
+
   if ( event.end ) {
     
-    data = {}; 
+    data = {};
 
   }
 
@@ -2361,7 +2442,7 @@ function onGestureRollDisplay ( event ) {
 
 function onGestureRotateDisplay ( event ) {
 
-  onGestureRotateObject( event, display );
+  onGestureTurnObject( event, display );
 
   if ( event.start ) saveDisplay();
   if ( event.current ) updateDisplay();
@@ -2544,7 +2625,42 @@ function onGestureHideScreenMonitor ( event ) {
 
 }
 
-function onGestureMoveScreenMonitor (event) {
+// function onGestureMoveScreenMonitor ( event ) {
+
+//   let data = event.userData;
+
+//   if ( event.start ) {
+
+//     data.selected = intersectScreen( gestures.raycasters.hand[0].ray )
+//     data.selected = data.selected.filter( (x) => x.object.material.uniforms.uPlaneVisible.value ) [0];
+
+//   }
+
+//   if ( data.selected ) {
+
+//     if ( event.start ) { 
+
+//       saveScreen() 
+//       data.axis = data.selected.object.userData.plane.normal.clone();
+
+//     };
+
+//     onGestureTranslateObjectOnWorldAxis( event, data.selected.object, data.axis );
+
+//     if ( event.current ) {
+
+//       updateScreen();
+//       updateScreenUniformsPlanes();
+//       updateModelUniformsPlanes();
+
+//     }
+
+//   }
+
+
+// }
+
+function onGestureMoveScreenMonitor ( event ) {
 
   let data = event.userData;
 
@@ -3275,7 +3391,7 @@ function saveData ( data, fileName ) {
   element.style.display = 'none';
 
   // Ensure data is in an array and specify the MIME type (if known/applicable)
-  const blob = new Blob(data, { type: 'application/octet-stream' });
+  const blob = new Blob( data, { type: 'application/octet-stream' } );
 	const url = window.URL.createObjectURL( blob );
 
 	element.href = url;
@@ -3347,7 +3463,7 @@ function positionToAxis ( position ) {
   // compute the correlation of the vector with each axis
   const axes = [ _xAxis, _yAxis, _zAxis ].map( (axis) => axis.clone() );
   const correlation = axes.map( (axis) => 
-    Math.abs( _vector.copy( vector ).projectOnVector( axis ).length() )
+    Math.abs( _vector3.copy( vector ).projectOnVector( axis ).length() )
   );
  
   // determine the closest axis to the vector
@@ -3370,7 +3486,7 @@ function formatVector( vector, digits ) {
 
 function mapVector ( vector, fun ) {
 
-  _vector.set(
+  _vector3.set(
 
     fun( vector.x ),
     fun( vector.y ),
@@ -3378,14 +3494,15 @@ function mapVector ( vector, fun ) {
     
   )
 
-  return _vector.clone();
+  return _vector3.clone();
   
 }
 
-function transformSubArray3D ( array, size, box, fun ) {
+function transformArray ( array, box, fun ) {
 
   let index, offsetX, offsetY, offsetZ;
   
+
   for ( let k = box.min.z; k <= box.max.z; k++ ) {
 
     offsetZ = size.x * size.y * k
@@ -3400,14 +3517,13 @@ function transformSubArray3D ( array, size, box, fun ) {
 
         offsetX = i;
 
-
         // linear index
 
         index = offsetX + offsetY + offsetZ;
         
         // element wise function
 
-        array[index] = fun(index);
+        array[index] = fun( i, j, k );
 
       }   
     }
@@ -3433,6 +3549,45 @@ function indexLinearTo3d( n, size ) {
   const j = Math.floor( ( n - k * size.x * size.y ) / size.x );
   const i = Math.floor( n - j * size.x - k * size.x * size.y ); // or index % size.x
 
-  return _vector.set( k, j, i );
+  return _vector3.set( k, j, i );
+
+}
+
+// extract images
+
+function convertArrayToImage( array, samples ) {
+
+  const canvas = document.createElement('canvas');
+  canvas.width = samples.x;
+  canvas.height = samples.y;
+
+  // create imageData object
+  const ctx = canvas.getContext('2d');
+  const imageData = ctx.createImageData( samples.x, samples.y );
+
+  // set our buffer as source
+  imageData.data.set( array );
+
+  for (let i = 0; i < array.length; i++) {
+    // Set R, G, and B channels to the grayscale value
+    imageData.data[i * 4 + 0] = array[i];    // R
+    imageData.data[i * 4 + 1] = array[i];    // G
+    imageData.data[i * 4 + 2] = array[i];    // B
+    imageData.data[i * 4 + 3] = 255;         // A (fully opaque)
+  }
+
+  ctx.putImageData( imageData, 0, 0 );
+
+  const dataURL = canvas.toDataURL('image/jpeg', 0.92);
+
+  // Create a link element for downloading
+  const link = document.createElement('a');
+  link.href = dataURL;
+  link.download = 'image.jpeg';  // Name of the file to be downloaded
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+
+  return imageData;
 
 }

@@ -12221,9 +12221,13 @@ class Image3D extends PixpipeContainer{
     var max$$1 = this.getMaxValue();
     var range = max$$1 - min$$1;
     var uint8Buff = new Uint8Array( data.length );
+
     for(var i=0; i<uint8Buff.length; i++){
+
       uint8Buff[i] = Math.round(((data[i] - min$$1) / range ) * 255);
+
     }
+	
     return uint8Buff;
   }
 
