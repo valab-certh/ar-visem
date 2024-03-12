@@ -1,10 +1,11 @@
-import GUI                    from "lil-gui"
-import * as THREE             from "three"
-import * as PIXPIPE           from "./prm/pixpipe.esmodule.js"
-import { XRGestures }         from './prm/XRGestures.js'
-import { OBB }                from 'three/addons/math/OBB.js'
-import { ARButton }           from 'three/addons/webxr/ARButton.js'
-import { OrbitControls }      from "three/addons/controls/OrbitControls.js"
+import GUI from "lil-gui"
+import * as THREE from "three"
+import * as PIXPIPE from "./prm/pixpipe.esmodule.js"
+import { XRGestures } from './prm/XRGestures.js'
+import { OBB } from 'three/addons/math/OBB.js'
+import { ARButton } from 'three/addons/webxr/ARButton.js'
+import { OrbitControls } from "three/addons/controls/OrbitControls.js"
+import { SamModel, AutoProcessor, RawImage , Tensor } from 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.14.0';
 
 // place holder variables
 
@@ -42,7 +43,6 @@ let display, container, screen, model, brush, volume, mask, selector; // main ob
 let raycaster, gestures, reticle; // helper objects
 
 let hitTestSource, hitTestSourceRequested, hitTestResult; // parameters AR
-
 
 main();
 
@@ -306,7 +306,7 @@ function setupDisplay () {
   display.visible = false;
   display.matrixAutoUpdate = false;
 
-  display.userData.modes = [ 'Place', 'Inspect', 'Edit', 'Segment', ];
+  display.userData.modes = [ 'Place', 'Inspect', 'Edit', 'Segment3D', ]; 
   display.userData.history = [];
   display.userData.future = [];
 
@@ -404,6 +404,7 @@ function updateUI () {
     selector.visible = false;
 
     brush.visible = true;
+    // brush.material.color.set( 0xff0055 );
   
     screen.userData.monitors.forEach( (monitor) => {  
 
@@ -421,7 +422,37 @@ function updateUI () {
 
   }
 
-  if ( display.userData.modes[0] === 'Segment' ) {
+  if ( display.userData.modes[0] === 'Segment2D' ) {
+
+    container.material.opacity = 0.0;   
+    container.userData.outline.visible = false;
+
+    model.visible = false;
+    model.material.uniforms.uModelAlpha.value = 0.4;
+    model.material.uniforms.uModelAlphaClip.value = 0.4;
+
+    selector.visible = false;
+
+    brush.visible = true;
+    brush.material.color.set( 0x0055ff );
+
+    screen.userData.monitors.forEach( (monitor) => {  
+
+      const isSelected = ( monitor.userData.index === brush.userData.monitorIndex );   
+
+      monitor.renderOrder = isSelected ? 1.5 : 1.0;
+      monitor.visible = true;
+
+      const uniforms = monitor.material.uniforms;
+      uniforms.uPlaneAlpha.value = isSelected ? 1.0 : 0.6;
+      uniforms.uBrushVisible.value = brush.visible;
+      uniforms.uSelectorVisible.value = selector.visible;
+
+    });  
+
+  }
+
+  if ( display.userData.modes[0] === 'Segment3D' ) {
 
     container.material.opacity = 0.0;   
     container.userData.outline.visible = false;
@@ -492,17 +523,6 @@ function updateVolume ( image3D ) {
   volume.userData.samples = samples;
   volume.userData.voxelSize = voxelSize;
   volume.userData.size = size;
-
-  // extract image
-
-  const image2D = image3D.getSlice( 'z',  Math.round( image3D.getDimensionSize('z') / 3 ));
-  
-  // get slice does not world correctly on metadata
-  image2D._metadata.min = image3D._metadata.statistics.min;
-  image2D._metadata.max = image3D._metadata.statistics.max;
-  const array = image2D.getDataAsUInt8Array();
-
-  const imageData = convertArrayToImage( array, samples );
 
 }
 
@@ -932,14 +952,12 @@ function setupBrush () {
   const radius = 0.01;
   const sphere = new THREE.Sphere( new THREE.Vector3(), radius );
   const geometry = new THREE.SphereGeometry( radius );
-  const material = new THREE.MeshBasicMaterial( { 
-    
+  const material = new THREE.MeshBasicMaterial( {   
     color: 0xff0055, // 0x00ffff, 
     depthTest: true,
     depthWrite: true,
     transparent: true, 
     opacity: 0.4,
-
   });
 
   brush.geometry = geometry;
@@ -1832,15 +1850,20 @@ function onPolytap ( event ) {
 
   if ( event.numTaps === 1 ) {
 
-  }
+    if ( display.userData.modes[0] === 'Place' ) ;
+    if ( display.userData.modes[0] === 'Inspect' ) ;
+    if ( display.userData.modes[0] === 'Edit' ) ;
+    if ( display.userData.modes[0] === 'Segment2D' ) onGestureSegmentSlice( event );
+    if ( display.userData.modes[0] === 'Segment3D' ) ;
 
+  }
   if ( event.numTaps === 2 ) {
         
     if ( display.userData.modes[0] === 'Place' ) onGesturePlaceDisplay( event );
     if ( display.userData.modes[0] === 'Inspect' ) onGestureHideScreenMonitor( event );
     if ( display.userData.modes[0] === 'Edit' ) onGestureToggleBrush( event );
-    if ( display.userData.modes[0] === 'Segment' ) onGestureUpdateSegmentation( event );
-
+    if ( display.userData.modes[0] === 'Segment2D' ) ;
+    if ( display.userData.modes[0] === 'Segment3D' ) onGestureUpdateSegmentation( event );
 
   }
 
@@ -1858,7 +1881,8 @@ function onSwipe ( event ) {
     if ( display.userData.modes[0] === 'Place'   ) undoDisplay( event );
     if ( display.userData.modes[0] === 'Inspect' ) undoScreen( event );
     if ( display.userData.modes[0] === 'Edit'    ) undoMask( event );
-    if ( display.userData.modes[0] === 'Segment' ) undoSelector( event );
+    if ( display.userData.modes[0] === 'Segment2D' ) ;
+    if ( display.userData.modes[0] === 'Segment3D' ) undoSelector( event );
 
 
   }
@@ -1868,7 +1892,8 @@ function onSwipe ( event ) {
     if ( display.userData.modes[0] === 'Place'   ) redoDisplay( event );
     if ( display.userData.modes[0] === 'Inspect' ) redoScreen( event );
     if ( display.userData.modes[0] === 'Edit'    ) redoMask( event );
-    if ( display.userData.modes[0] === 'Segment' ) redoSelector( event );
+    if ( display.userData.modes[0] === 'Segment2D' ) ;
+    if ( display.userData.modes[0] === 'Segment3D' ) redoSelector( event );
     
   }
 
@@ -1892,7 +1917,8 @@ function onHold ( event ) {
 
   }
   if ( display.userData.modes[0] === 'Edit'    ) onGestureEditMask( event );
-  if ( display.userData.modes[0] === 'Segment' ) {
+  if ( display.userData.modes[0] === 'Segment2D' ) ;
+  if ( display.userData.modes[0] === 'Segment3D' ) {
 
     if ( event.start ) event.userData.flag = intersectsSelector( gestures.raycasters.hand[0].ray );
 
@@ -1915,7 +1941,8 @@ function onPan ( event ) {
   if ( display.userData.modes[0] === 'Place'   ) onGestureRotateDisplay( event );
   if ( display.userData.modes[0] === 'Inspect' ) onGestureRotateScreenMonitor( event );
   if ( display.userData.modes[0] === 'Edit'    ) onGestureRotateDisplay( event );
-  if ( display.userData.modes[0] === 'Segment' ) onGestureRotateDisplay( event );
+  if ( display.userData.modes[0] === 'Segment2D' ) ;
+  if ( display.userData.modes[0] === 'Segment3D' ) onGestureRotateDisplay( event );
 
 }
   
@@ -1926,7 +1953,8 @@ function onPinch ( event ) {
   if ( display.userData.modes[0] === 'Place'   ) onGestureResizeDisplay ( event );
   if ( display.userData.modes[0] === 'Inspect' ) onGestureResizeDisplay ( event );
   if ( display.userData.modes[0] === 'Edit'    ) onGestureResizeBrush   ( event );
-  if ( display.userData.modes[0] === 'Segment' ) onGestureResizeSelector( event );
+  if ( display.userData.modes[0] === 'Segment2D' ) ;
+  if ( display.userData.modes[0] === 'Segment3D' ) onGestureResizeSelector( event );
 
 } 
 
@@ -1937,7 +1965,8 @@ function onTwist ( event ) {
   if ( display.userData.modes[0] === 'Place') onGestureRollDisplay( event );
   if ( display.userData.modes[0] === 'Inspect') onGestureRollScreen( event );
   if ( display.userData.modes[0] === 'Edit') onGestureContrastScreen( event );
-  if ( display.userData.modes[0] === 'Segment' ) onGestureRollDisplay( event );
+  if ( display.userData.modes[0] === 'Segment2D' ) ;
+  if ( display.userData.modes[0] === 'Segment3D' ) onGestureRollDisplay( event );
 
 }
   
@@ -1955,7 +1984,8 @@ function onImplode ( event ) {
   if ( display.userData.modes[0] === 'Place') resetDisplay( event );
   if ( display.userData.modes[0] === 'Inspect') resetScreen( event );
   if ( display.userData.modes[0] === 'Edit') resetMask( event );
-  if ( display.userData.modes[0] === 'Segment' ) resetSelector( event );
+  if ( display.userData.modes[0] === 'Segment2D' ) ;
+  if ( display.userData.modes[0] === 'Segment3D' ) resetSelector( event );
 
 }
 
@@ -1963,12 +1993,10 @@ function onImplode ( event ) {
 
 function onGestureAttachObject ( event, object ) {
   
-  if ( event.start ) event.userData.cache = {};
-
-  let data = event.userData.cache;
+  let data = event.userData.cache = event.userData.cache ?? {};
 
   if ( event.start ){
-
+    
     data.object = new THREE.Object3D();
 
     object.matrixWorld.decompose( data.object.position, data.object.quaternion, data.object.scale )
@@ -2002,9 +2030,7 @@ function onGestureAttachObject ( event, object ) {
 
 function onGestureResizeObject ( event, object ) {
 
-  if ( event.start ) event.userData.cache = {};
-
-  let data = event.userData.cache;
+  let data = event.userData.cache = event.userData.cache ?? {};
 
   if ( event.start ) {
   
@@ -2033,9 +2059,7 @@ function onGestureResizeObject ( event, object ) {
 
 function onGestureTranslateObject ( event, object ) {
   
-  if ( event.start ) event.userData.cache = {};
-
-  let data = event.userData.cache;
+  let data = event.userData.cache = event.userData.cache ?? {};
 
   if ( event.start ){
 
@@ -2068,9 +2092,7 @@ function onGestureTranslateObject ( event, object ) {
 
 function onGestureRollObject ( event, object ) {
   
-  if ( event.start ) event.userData.cache = {};
-
-  let data = event.userData.cache;
+  let data = event.userData.cache = event.userData.cache ?? {};
 
   if ( event.start ){
 
@@ -2104,9 +2126,7 @@ function onGestureRollObject ( event, object ) {
 
 function onGestureTurnObject ( event, object ) {
 
-  if ( event.start ) event.userData.cache = {};
-
-  let data = event.userData.cache;
+  let data = event.userData.cache = event.userData.cache ?? {};
 
   if ( event.start ) {
 
@@ -2149,10 +2169,8 @@ function onGestureTurnObject ( event, object ) {
 }
 
 function onGestureTranslateObjectOnWorldAxis ( event, object, axis ) {
-
-  if ( event.start ) event.userData.cache = {};
-
-  let data = event.userData.cache;
+  
+  let data = event.userData.cache = event.userData.cache ?? {};
 
   if ( event.start ) {
 
@@ -2213,9 +2231,7 @@ function onGestureTranslateObjectOnWorldAxis ( event, object, axis ) {
 
 function onGestureRotateObjectOnWorldPivot ( event, object, point, direction ) {
 
-  if ( event.start ) event.userData.cache = {};
-
-  let data = event.userData.cache;
+  let data = event.userData.cache = event.userData.cache ?? {};
     
   if ( event.start ) {
 
@@ -3310,6 +3326,28 @@ function onGestureMoveSelectorFace ( event ) {
 
 }
 
+// segment 2D gesture actions 
+
+async function onGestureSegmentSlice( event ) {
+
+  if ( event.end ) {
+
+    const dimension = 'z';
+    const slice = Math.round( volume.userData.image3D.getDimensionSize( dimension ) / 3 );
+
+    const inputPoints = [[[
+      volume.userData.image3D.getDimensionSize( 'x' ) / 2,
+      volume.userData.image3D.getDimensionSize( 'y' ) / 2,
+    ]]];
+
+    const rawImage = await sliceToRawImage( dimension, slice, 12 );
+    const { masks, scores } = await segmentImage( rawImage, inputPoints );
+    
+  } 
+  
+
+}
+
 // helpers
 
 async function loadShader ( url ) {
@@ -3533,7 +3571,7 @@ function transformArray ( array, box, fun ) {
 
 }
 
-function index3dToLinear( indices, size ) {
+function index3dToLinear ( indices, size ) {
 
   const offsetX = indices.x;
   const offsetY = indices.y * size.x
@@ -3543,7 +3581,7 @@ function index3dToLinear( indices, size ) {
 
 }
 
-function indexLinearTo3d( n, size ) {
+function indexLinearTo3d ( n, size ) {
 
   const k = Math.floor( n / ( size.x * size.y ) ); 
   const j = Math.floor( ( n - k * size.x * size.y ) / size.x );
@@ -3555,31 +3593,94 @@ function indexLinearTo3d( n, size ) {
 
 // extract images
 
-function convertArrayToImage( array, samples ) {
+async function sliceToRawImage ( dimension, sliceNumber, samplingFactor ) {
+
+  const image3D = volume.userData.image3D;
+  const image2D = image3D.getSlice( dimension, Math.round( sliceNumber ) );
+  
+  // metadata need to be manually corrected
+  image2D._metadata.min = image3D._metadata.statistics.min;
+  image2D._metadata.max = image3D._metadata.statistics.max;
+
+  const data = image2D.getDataAsUInt8Array();
+  const width = volume.userData.samples.x;
+  const height = volume.userData.samples.y;
+  const channels = 1;
+
+  let image = await new RawImage( data, width, height, channels );
+  const width2 = Math.round( width / samplingFactor );
+  const height2 = Math.round( height / samplingFactor );
+
+  image = await image.resize( width2, height2, { resample: 'bilinear' });
+
+  return image;
+
+}
+
+async function segmentImage ( rawImage, inputPoints ) {
+
+  const modelID = 'Xenova/medsam-vit-base'; //'Xenova/slimsam-77-uniform';
+  const model = await SamModel.from_pretrained( modelID );
+  const processor = await AutoProcessor.from_pretrained( modelID );
+
+  const inputs = await processor( rawImage, inputPoints );
+  const outputs = await model( inputs );
+
+  const masks = await processor.post_process_masks( outputs.pred_masks, inputs.original_sizes, inputs.reshaped_input_sizes );
+  // [
+  //   Tensor {
+  //     dims: [ 1, 3, 1764, 2646 ],
+  //     type: 'bool',
+  //     data: Uint8Array(14002632) [ ... ],
+  //     size: 14002632
+  //   }
+  // ]
+
+  const scores = outputs.iou_scores;
+  // Tensor {
+  //   dims: [ 1, 1, 3 ],
+  //   type: 'float32',
+  //   data: Float32Array(3) [
+  //     0.8892380595207214,
+  //     0.9311248064041138,
+  //     0.983696699142456
+  //   ],
+  //   size: 3
+  // }
+
+  return { masks, scores };
+
+}
+
+function image2DToDataURL( image2D ) {
 
   const canvas = document.createElement('canvas');
-  canvas.width = samples.x;
-  canvas.height = samples.y;
-
+  canvas.width = image2D.getWidth();
+  canvas.height = image2D.getHeight();
+  
   // create imageData object
-  const ctx = canvas.getContext('2d');
-  const imageData = ctx.createImageData( samples.x, samples.y );
-
+  const context = canvas.getContext('2d');
+  const imageData = context.createImageData( canvas.width, canvas.height );
+  
   // set our buffer as source
   imageData.data.set( array );
-
+  
   for (let i = 0; i < array.length; i++) {
+  
     // Set R, G, and B channels to the grayscale value
     imageData.data[i * 4 + 0] = array[i];    // R
     imageData.data[i * 4 + 1] = array[i];    // G
     imageData.data[i * 4 + 2] = array[i];    // B
     imageData.data[i * 4 + 3] = 255;         // A (fully opaque)
+  
   }
-
-  ctx.putImageData( imageData, 0, 0 );
-
-  const dataURL = canvas.toDataURL('image/jpeg', 0.92);
-
+  
+  context.putImageData( imageData, 0, 0 );
+  
+  
+  const quality = 0.92;
+  const dataURL = canvas.toDataURL( 'image/jpeg', quality );
+  
   // Create a link element for downloading
   const link = document.createElement('a');
   link.href = dataURL;
@@ -3587,7 +3688,11 @@ function convertArrayToImage( array, samples ) {
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
-
+  
   return imageData;
+  
+}
+
+function subSampleImage ( image2D ) {
 
 }

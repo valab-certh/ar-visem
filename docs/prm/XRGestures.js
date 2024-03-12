@@ -319,14 +319,14 @@ class XRGestures extends THREE.EventDispatcher {
             this.detector.polytap.numTaps = this.detector.tap.numTaps;
             this.detector.polytap.timeoutID = setTimeout( () => this.endGesture('polytap'), XRGestures.POLYTAP_DURATION );
 
-            this.dispatchEvent( { type: 'polytap', start: true, numTaps: this.detector.polytap.numTaps } ); 
+            this.dispatchEvent( { type: 'polytap', start: true, numTaps: this.detector.polytap.numTaps, userData: this.detector.polytap.userData } ); 
             this.startGesture('polytap');
 
         }
 
         if ( this.detector.polytap.current ) {          
 
-            this.dispatchEvent( { type: 'polytap', current: true, numTaps: this.detector.polytap.numTaps } ); 
+            this.dispatchEvent( { type: 'polytap', current: true, numTaps: this.detector.polytap.numTaps, userData: this.detector.polytap.userData } ); 
 
             // break condition
             if ( this.detector.numConnected > 1 ) { 
@@ -352,7 +352,7 @@ class XRGestures extends THREE.EventDispatcher {
 
         if ( this.detector.polytap.end ) {
 
-            this.dispatchEvent( { type: 'polytap', end: true, numTaps: this.detector.polytap.numTaps } ); 
+            this.dispatchEvent( { type: 'polytap', end: true, numTaps: this.detector.polytap.numTaps, userData: this.detector.polytap.userData } ); 
             this.delayDetector( XRGestures.DETECT_DELAY ); 
             this.resetGestureAll();
 
@@ -501,7 +501,7 @@ class XRGestures extends THREE.EventDispatcher {
         
         if ( this.detector.pinch.end ) {
 
-            this.dispatchEvent( { type: 'pinch', end: true } );
+            this.dispatchEvent( { type: 'pinch', end: true, userData: this.detector.pinch.userData } );
             this.delayDetector( XRGestures.DETECT_DELAY ); 
             this.resetGestureAll(); 
 
