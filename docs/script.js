@@ -467,7 +467,7 @@ function setupDisplay () {
   display.visible = false;
   display.matrixAutoUpdate = false;
 
-  display.userData.modes = [ 'Place', 'Inspect', 'Edit', 'Segment2D', ]; 
+  display.userData.modes = [ 'Place', 'Inspect', 'Edit', 'Segment3D', ]; 
   display.userData.history = [];
   display.userData.future = [];
 
@@ -1958,7 +1958,7 @@ function onVolumeUpload ( event ) {
 
     display.visible = true;
 
-    runSegmentation();
+    // runSegmentation();
 
   });
 }
