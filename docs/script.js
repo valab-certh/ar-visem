@@ -5,7 +5,7 @@ import { XRGestures } from './prm/XRGestures.js'
 import { OBB } from 'three/addons/math/OBB.js'
 import { ARButton } from 'three/addons/webxr/ARButton.js'
 import { OrbitControls } from "three/addons/controls/OrbitControls.js"
-import { SamModel, AutoProcessor, RawImage , Tensor } from 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.14.0';
+import { AutoConfig, AutoModel, AutoProcessor, RawImage , Tensor } from 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.14.0';
 
 // place holder variables
 
@@ -44,17 +44,20 @@ let raycaster, gestures, reticle; // helper objects
 
 let hitTestSource, hitTestSourceRequested, hitTestResult; // parameters AR
 
+let worker;
+
 main();
 
 function main () {
 
   setupObjects3D();
-  setupVolume();
-  setupMask();
+  setupVolumeObject();
+  setupMaskObject();
 
   setupScene();
   setupGui();
   setupButton();
+  setupWorker();
 
   renderer.setAnimationLoop( updateAnimation );
 
@@ -230,6 +233,20 @@ function setupGestures () {
 
 }
 
+function setupWorker () {
+
+  worker = new Worker('./prm/worker.js', {
+    type: 'module',
+  });
+
+  worker.addEventListener( 'message', (event) => {
+
+    if( event.data.type === 'result' ) onWorkerResult( event );
+          
+  });
+
+}
+
 function updateHitTest ( renderer, frame, onHitTestResultReady, onHitTestResultEmpty, onSessionEnd ) {
 
   const session = renderer.xr.getSession();
@@ -280,59 +297,6 @@ function updateHitTest ( renderer, frame, onHitTestResultReady, onHitTestResultE
     } else onHitTestResultEmpty();
 
   }
-
-}
-
-// display
-
-function setupDisplay () {
-
-  // objects 3D
-
-  setupScreen();
-  setupModel();
-  setupContainer(); 
-  setupBrush();
-  setupSelector();
-
-  // uniforms
-
-  setupGlobalUniforms();
-  setupScreenUniforms();
-  setupModelUniforms();
-
-  // parameters
-
-  display.visible = false;
-  display.matrixAutoUpdate = false;
-
-  display.userData.modes = [ 'Place', 'Inspect', 'Edit', 'Segment3D', ]; 
-  display.userData.history = [];
-  display.userData.future = [];
-
-  // visual UI
-
-  updateUI(); 
-
-}
-
-function updateDisplay () {
-  
-  display.updateMatrix();
-
-  // objects 3D
-
-  if ( container.visible ) updateContainer();
-  if ( screen.visible ) updateScreen();
-  if ( model.visible) updateModel();
-  if ( brush.visible ) updateBrush();
-  if ( selector.visible ) updateSelector();
-  
-  // uniforms
-
-  updateGlobalUniforms();
-  updateScreenUniforms();
-  updateModelUniforms();
 
 }
 
@@ -480,17 +444,143 @@ function updateUI () {
   
 }
 
+// display
+
+function setupDisplay () {
+
+  // objects 3D
+
+  setupScreen();
+  setupModel();
+  setupContainer(); 
+  setupBrush();
+  setupSelector();
+
+  // uniforms
+
+  setupGlobalUniforms();
+  setupScreenUniforms();
+  setupModelUniforms();
+
+  // parameters
+
+  display.visible = false;
+  display.matrixAutoUpdate = false;
+
+  display.userData.modes = [ 'Place', 'Inspect', 'Edit', 'Segment2D', ]; 
+  display.userData.history = [];
+  display.userData.future = [];
+
+  // visual UI
+
+  updateUI(); 
+
+}
+
+function updateDisplay () {
+  
+  display.updateMatrix();
+
+  // objects 3D
+
+  if ( container.visible ) updateContainer();
+  if ( screen.visible ) updateScreen();
+  if ( model.visible) updateModel();
+  if ( brush.visible ) updateBrush();
+  if ( selector.visible ) updateSelector();
+  
+  // uniforms
+
+  updateGlobalUniforms();
+  updateScreenUniforms();
+  updateModelUniforms();
+
+}
+
+function shiftMode () {
+
+  display.userData.modes.push( display.userData.modes.shift() );
+
+  updateUI();
+
+}
+
+function unshiftMode () {
+
+  display.userData.modes.unshift( display.userData.modes.pop() );
+
+  updateUI();
+
+}
+
+function resetDisplay () {
+
+  saveDisplay();
+
+  display.quaternion.copy( new THREE.Quaternion() ); 
+
+  updateDisplay();  
+  
+}
+
+function saveDisplay () {
+
+  display.updateMatrix();
+
+  const record = { matrix: display.matrix.clone() };
+
+  display.userData.history.unshift( record );
+
+}
+function undoDisplay () {
+
+  display.updateMatrix();
+
+  const record = { matrix: display.matrix.clone() };
+
+  display.userData.future.unshift( record );
+
+  if ( display.userData.history.length > 0) {
+
+    display.matrix.copy( display.userData.history.shift().matrix );
+    display.matrix.decompose( display.position, display.quaternion, display.scale ); 
+
+    updateDisplay();
+
+  }
+  
+}
+
+function redoDisplay () {
+
+  display.updateMatrix();
+
+  const record = { matrix: display.matrix.clone() };
+  display.userData.history.unshift( record );
+
+  if ( display.userData.future.length > 0) {
+
+    display.matrix.copy( display.userData.future.shift().matrix );
+    display.matrix.decompose( display.position, display.quaternion, display.scale ); 
+
+    updateDisplay();
+
+  }
+
+}
+
 // volume
 
-function setupVolume () { 
+function setupVolumeObject () { 
     
   volume = { userData: {} };
 
+  volume.userData.data0 = new Uint8Array();
   volume.userData.texture = new THREE.Data3DTexture();
   volume.userData.size = new THREE.Vector3();
   volume.userData.samples = new THREE.Vector3();
   volume.userData.voxelSize = new THREE.Vector3();
-  
+
 }
 
 function updateVolume ( image3D ) { 
@@ -526,9 +616,36 @@ function updateVolume ( image3D ) {
 
 }
 
+function updateVolumeFromMask () {
+
+  const image3D = mask.userData.image3D.clone();
+  const data = image3D.getDataUint8().fill( 0 );
+
+  const size = mask.userData.size.clone();
+  const samples = mask.userData.samples.clone();
+  const voxelSize = mask.userData.voxelSize.clone();
+
+  const texture = new THREE.Data3DTexture( data, ...samples.toArray() );
+  texture.format = THREE.RedFormat;
+  texture.type = THREE.UnsignedByteType;
+  texture.minFilter = THREE.NearestFilter;
+  texture.magFilter = THREE.NearestFilter;
+  texture.unpackAlignment = 1;
+  texture.needsUpdate = true;
+
+  // update user data
+  volume.userData.image3D = image3D;
+  volume.userData.data0 = data;
+  volume.userData.texture = texture;
+  volume.userData.samples = samples;
+  volume.userData.voxelSize = voxelSize;
+  volume.userData.size = size;
+
+}
+
 // mask
 
-function setupMask () { 
+function setupMaskObject () { 
 
   mask = { userData: {} };
 
@@ -600,6 +717,38 @@ function updateMaskTexture ( array, min, max ) {
   }
    
   mask.userData.texture.needsUpdate = true;
+
+}
+
+function updateMaskFromVolume () {
+    
+  const image3D = volume.userData.image3D.clone();
+  image3D.resetData( 0 );
+  image3D._metadata.statistics.min = 0;
+  image3D._metadata.statistics.max = 0;
+
+  const data = image3D.getDataUint8();
+  const size = volume.userData.size.clone();
+  const samples = volume.userData.samples.clone();
+  const voxelSize = volume.userData.voxelSize.clone();
+
+  const texture = new THREE.Data3DTexture( data, ...samples.toArray() );  
+  texture.format = THREE.RedFormat;
+  texture.type = THREE.UnsignedByteType;
+  texture.minFilter = THREE.NearestFilter;
+  texture.magFilter = THREE.NearestFilter;
+  texture.unpackAlignment = 1;
+  texture.needsUpdate = true;
+
+  // update user data
+  mask.userData.history = [];
+  mask.userData.future = [];
+  mask.userData.image3D = image3D;
+  mask.userData.data0 = data;
+  mask.userData.texture = texture;
+  mask.userData.samples = samples;
+  mask.userData.voxelSize = voxelSize;
+  mask.userData.size = size;
 
 }
 
@@ -1374,6 +1523,67 @@ function intersectsSelector ( rayOrOrigin, direction ) {
   return false;
 
 }
+
+function resetSelector () {
+
+  saveSelector( event );
+
+  selector.position.set( 0, 0, 0 );
+  selector.scale.copy( volume.userData.size );
+  selector.updateMatrix();
+
+  updateSelector();  
+  
+}
+
+function saveSelector () {
+
+  selector.updateMatrix();
+
+  const record = { 
+    matrix: selector.matrix.clone(),
+  };
+
+  selector.userData.history.unshift( record );
+
+}
+
+function undoSelector () {
+
+  selector.updateMatrix();
+
+  const record = { matrix: selector.matrix.clone() };
+
+  selector.userData.future.unshift( record );
+
+  if ( selector.userData.history.length > 0) {
+
+    selector.matrix.copy( selector.userData.history.shift().matrix );
+    selector.matrix.decompose( selector.position, selector.quaternion, selector.scale ); 
+
+    updateSelector();
+
+  }
+  
+}
+
+function redoSelector () {
+
+  selector.updateMatrix();
+
+  const record = { matrix: selector.matrix.clone() };
+  selector.userData.history.unshift( record );
+
+  if ( selector.userData.future.length > 0) {
+
+    selector.matrix.copy( selector.userData.future.shift().matrix );
+    selector.matrix.decompose( selector.position, selector.quaternion, selector.scale ); 
+
+    updateSelector();
+
+  }
+
+}
  
 // global uniforms
 
@@ -1732,19 +1942,23 @@ function onVolumeUpload ( event ) {
   loadNIFTI( event.target.files[0] ).then( (image3D) => {
 
     updateVolume( image3D );  
-
+    if ( ! mask.userData.image3D ) updateMaskFromVolume();
+    
     setupScreen();
     setupModel();
     setupContainer(); 
     setupSelector();
-
     setupScreenUniforms();
     setupModelUniforms();
 
+    updateScreenUniforms(); 
+    updateModelUniforms();
     updateDisplay();
     updateUI();
 
     display.visible = true;
+
+    runSegmentation();
 
   });
 }
@@ -1754,14 +1968,21 @@ function onMaskUpload ( event ) {
   loadNIFTI( event.target.files[0] ).then( (image3D) => {
 
     updateMask( image3D );
+    if ( ! volume.userData.image3D ) updateVolumeFromMask();
 
+    setupScreen();
     setupModel();
+    setupContainer(); 
+    setupSelector();
+    setupScreenUniforms();
     setupModelUniforms();
-    
-    updateScreenUniforms();
 
+    updateScreenUniforms(); 
+    updateModelUniforms();
     updateDisplay();
     updateUI();
+
+    display.visible = true;
 
   });
 
@@ -1835,10 +2056,16 @@ function onSessionEnd () {
 
   camera.position.set( 1, 0.6, 1 );   
 
-  display.position.set( 0, 0, 0 );
+  display.position.copy( volume.userData.size ).divideScalar( 2 );
   display.userData.modes = [ 'Place', 'Inspect', 'Edit', 'Segment' ];
 
   updateDisplay();
+
+}
+
+function onWorkerResult( event ) {
+
+  const { mask, scores } = event.data.data;
 
 }
 
@@ -2290,79 +2517,6 @@ function onGestureRotateObjectOnWorldPivot ( event, object, point, direction ) {
 }
 
 // display gesture actions
-
-function shiftMode () {
-
-  display.userData.modes.push( display.userData.modes.shift() );
-
-  updateUI();
-
-}
-
-function unshiftMode () {
-
-  display.userData.modes.unshift( display.userData.modes.pop() );
-
-  updateUI();
-
-}
-
-function resetDisplay () {
-
-  saveDisplay();
-
-  display.quaternion.copy( new THREE.Quaternion() ); 
-
-  updateDisplay();  
-  
-}
-
-function saveDisplay () {
-
-  display.updateMatrix();
-
-  const record = { matrix: display.matrix.clone() };
-
-  display.userData.history.unshift( record );
-
-}
-
-function undoDisplay () {
-
-  display.updateMatrix();
-
-  const record = { matrix: display.matrix.clone() };
-
-  display.userData.future.unshift( record );
-
-  if ( display.userData.history.length > 0) {
-
-    display.matrix.copy( display.userData.history.shift().matrix );
-    display.matrix.decompose( display.position, display.quaternion, display.scale ); 
-
-    updateDisplay();
-
-  }
-  
-}
-
-function redoDisplay () {
-
-  display.updateMatrix();
-
-  const record = { matrix: display.matrix.clone() };
-  display.userData.history.unshift( record );
-
-  if ( display.userData.future.length > 0) {
-
-    display.matrix.copy( display.userData.future.shift().matrix );
-    display.matrix.decompose( display.position, display.quaternion, display.scale ); 
-
-    updateDisplay();
-
-  }
-
-}
 
 function onGesturePlaceDisplay ( event ) {
 
@@ -3040,67 +3194,6 @@ function onGestureResizeBrush ( event ) {
 
 // selector gesture actions 
 
-function resetSelector () {
-
-  saveSelector( event );
-
-  selector.position.set( 0, 0, 0 );
-  selector.scale.copy( volume.userData.size );
-  selector.updateMatrix();
-
-  updateSelector();  
-  
-}
-
-function saveSelector () {
-
-  selector.updateMatrix();
-
-  const record = { 
-    matrix: selector.matrix.clone(),
-  };
-
-  selector.userData.history.unshift( record );
-
-}
-
-function undoSelector () {
-
-  selector.updateMatrix();
-
-  const record = { matrix: selector.matrix.clone() };
-
-  selector.userData.future.unshift( record );
-
-  if ( selector.userData.history.length > 0) {
-
-    selector.matrix.copy( selector.userData.history.shift().matrix );
-    selector.matrix.decompose( selector.position, selector.quaternion, selector.scale ); 
-
-    updateSelector();
-
-  }
-  
-}
-
-function redoSelector () {
-
-  selector.updateMatrix();
-
-  const record = { matrix: selector.matrix.clone() };
-  selector.userData.history.unshift( record );
-
-  if ( selector.userData.future.length > 0) {
-
-    selector.matrix.copy( selector.userData.future.shift().matrix );
-    selector.matrix.decompose( selector.position, selector.quaternion, selector.scale ); 
-
-    updateSelector();
-
-  }
-
-}
-
 async function computeSegmentation() {
 
   const array = new Uint8Array( mask.userData.data0.length ).fill( 1 );
@@ -3591,14 +3684,15 @@ function indexLinearTo3d ( n, size ) {
 
 }
 
-// extract images
+// segmentation
 
-async function sliceToRawImage ( dimension, sliceNumber, samplingFactor ) {
+async function runSegmentation() {
+
+  const dimension = 'z';
+  const number = Math.round( volume.userData.image3D.getDimensionSize( dimension ) / 3 );
 
   const image3D = volume.userData.image3D;
-  const image2D = image3D.getSlice( dimension, Math.round( sliceNumber ) );
-  
-  // metadata need to be manually corrected
+  const image2D = image3D.getSlice( dimension, number );
   image2D._metadata.min = image3D._metadata.statistics.min;
   image2D._metadata.max = image3D._metadata.statistics.max;
 
@@ -3607,92 +3701,17 @@ async function sliceToRawImage ( dimension, sliceNumber, samplingFactor ) {
   const height = volume.userData.samples.y;
   const channels = 1;
 
-  let image = await new RawImage( data, width, height, channels );
-  const width2 = Math.round( width / samplingFactor );
-  const height2 = Math.round( height / samplingFactor );
+  const points = [[[
+    volume.userData.image3D.getDimensionSize( 'x' ) / 2,
+    volume.userData.image3D.getDimensionSize( 'y' ) / 2,
+  ]]];
 
-  image = await image.resize( width2, height2, { resample: 'bilinear' });
-
-  return image;
-
-}
-
-async function segmentImage ( rawImage, inputPoints ) {
-
-  const modelID = 'Xenova/medsam-vit-base'; //'Xenova/slimsam-77-uniform';
-  const model = await SamModel.from_pretrained( modelID );
-  const processor = await AutoProcessor.from_pretrained( modelID );
-
-  const inputs = await processor( rawImage, inputPoints );
-  const outputs = await model( inputs );
-
-  const masks = await processor.post_process_masks( outputs.pred_masks, inputs.original_sizes, inputs.reshaped_input_sizes );
-  // [
-  //   Tensor {
-  //     dims: [ 1, 3, 1764, 2646 ],
-  //     type: 'bool',
-  //     data: Uint8Array(14002632) [ ... ],
-  //     size: 14002632
-  //   }
-  // ]
-
-  const scores = outputs.iou_scores;
-  // Tensor {
-  //   dims: [ 1, 1, 3 ],
-  //   type: 'float32',
-  //   data: Float32Array(3) [
-  //     0.8892380595207214,
-  //     0.9311248064041138,
-  //     0.983696699142456
-  //   ],
-  //   size: 3
-  // }
-
-  return { masks, scores };
-
-}
-
-function image2DToDataURL( image2D ) {
-
-  const canvas = document.createElement('canvas');
-  canvas.width = image2D.getWidth();
-  canvas.height = image2D.getHeight();
-  
-  // create imageData object
-  const context = canvas.getContext('2d');
-  const imageData = context.createImageData( canvas.width, canvas.height );
-  
-  // set our buffer as source
-  imageData.data.set( array );
-  
-  for (let i = 0; i < array.length; i++) {
-  
-    // Set R, G, and B channels to the grayscale value
-    imageData.data[i * 4 + 0] = array[i];    // R
-    imageData.data[i * 4 + 1] = array[i];    // G
-    imageData.data[i * 4 + 2] = array[i];    // B
-    imageData.data[i * 4 + 3] = 255;         // A (fully opaque)
-  
-  }
-  
-  context.putImageData( imageData, 0, 0 );
-  
-  
-  const quality = 0.92;
-  const dataURL = canvas.toDataURL( 'image/jpeg', quality );
-  
-  // Create a link element for downloading
-  const link = document.createElement('a');
-  link.href = dataURL;
-  link.download = 'image.jpeg';  // Name of the file to be downloaded
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  
-  return imageData;
-  
-}
-
-function subSampleImage ( image2D ) {
+  worker.postMessage( { 
+    data: data, 
+    width: width, 
+    height: height, 
+    channels: channels, 
+    points: points 
+  } );
 
 }
