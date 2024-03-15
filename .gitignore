@@ -1,6 +1,0 @@
-# ignore all .txt files
-*.txt
-
-# ignore all directories with these names
-node_modules/
-data/
