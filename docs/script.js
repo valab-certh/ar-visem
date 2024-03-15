@@ -3974,7 +3974,6 @@ function projectBoxOnPlane ( box, plane ) {
 
   return _box.setFromPoints( _points );
 }
-
 function positionToSample ( position ) {
   // convert position in display's local coordinates to voxel sample vector index
 
