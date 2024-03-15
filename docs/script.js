@@ -53,7 +53,6 @@ function main () {
   setupScene();
   setupGui();
   setupButton();
-  // setupWorkerMobileSam();
   
   renderer.setAnimationLoop( updateAnimation );
 
@@ -119,13 +118,14 @@ function setupScene () {
   scene.add( display );
   scene.add( reticle );
 
+  screen.add( selector2D );
+
   display.add( screen );
   display.add( model );
-  display.add( selector3D);
+  display.add( selector3D );
   display.add( brush );
   display.add( container );
 
-  screen.add( selector2D );
 
   // render order
 
@@ -3973,6 +3973,26 @@ function projectBoxOnPlane ( box, plane ) {
   _points.forEach( (point) => plane.projectPoint( point, point ) );
 
   return _box.setFromPoints( _points );
+}
+
+function positionToSample ( position ) {
+  // convert position in display's local coordinates to voxel sample vector index
+
+  const samples = mask.userData.samples;
+  const voxel = mask.userData.voxelSize;
+  const center = new THREE.Vector3().copy( mask.userData.size ).divideScalar( 2 );
+
+  const indices = new THREE.Vector3(
+    Math.round( (position.x + center.x) / voxel.x ),
+    Math.round( (position.y + center.y) / voxel.y ),
+    Math.round( (position.z + center.z) / voxel.z ),
+  );
+
+  const minIndices = new THREE.Vector3();
+  const maxIndices = new THREE.Vector3().copy( samples ).subScalar( 1 );
+  indices.clamp( minIndices, maxIndices );
+
+  return indices;
 }
 
 function positionToAxis ( position ) {
