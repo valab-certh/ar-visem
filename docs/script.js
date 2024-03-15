@@ -5,7 +5,6 @@ import { XRGestures } from './prm/XRGestures.js'
 import { OBB } from 'three/addons/math/OBB.js'
 import { ARButton } from 'three/addons/webxr/ARButton.js'
 import { OrbitControls } from "three/addons/controls/OrbitControls.js"
-import { AutoConfig, AutoModel, AutoProcessor, RawImage , Tensor } from 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.14.0';
 
 // place holder variables
 
@@ -38,7 +37,7 @@ const fragmentModel = await loadShader('./prm/fragment_model.glsl');
 // global objects
 let camera, scene, renderer, canvas, orbitControls; // scene objects
 
-let display, container, screen, model, brush, volume, mask, selector; // main objects
+let display, container, screen, model, brush, volume, mask, selector3D, selector2D; // main objects
 
 let raycaster, gestures, reticle; // helper objects
 
@@ -50,32 +49,33 @@ main();
 
 function main () {
 
-  setupObjects3D();
-  setupVolumeObject();
-  setupMaskObject();
-
+  setupObjects();
   setupScene();
   setupGui();
   setupButton();
-  setupWorker();
-
+  // setupWorkerMobileSam();
+  
   renderer.setAnimationLoop( updateAnimation );
 
 }
 
-function setupObjects3D () {
+function setupObjects () {
 
-  display   = new THREE.Object3D();
-  screen    = new THREE.Object3D();
+  display = new THREE.Object3D();
+  screen  = new THREE.Object3D();
 
-  container = new THREE.Mesh();
-  model     = new THREE.Mesh();
-  brush     = new THREE.Mesh();
-  selector  = new THREE.Mesh();
-  reticle   = new THREE.Mesh();
+  container  = new THREE.Mesh();
+  model      = new THREE.Mesh();
+  brush      = new THREE.Mesh();
+  reticle    = new THREE.Mesh();
+  selector2D = new THREE.Mesh();
+  selector3D = new THREE.Mesh();
 
   raycaster = new THREE.Raycaster();
   
+  setupVolumeObject();
+  setupMaskObject();
+
 }
 
 function setupScene () {
@@ -121,13 +121,15 @@ function setupScene () {
 
   display.add( screen );
   display.add( model );
-  display.add( selector);
+  display.add( selector3D);
   display.add( brush );
   display.add( container );
 
+  screen.add( selector2D );
+
   // render order
 
-  [ reticle, screen, model, selector, brush, container ].forEach( (object3D, i) => object3D.renderOrder = i );
+  [ reticle, screen, model, selector2D, selector3D, brush, container ].forEach( (object3D, i) => object3D.renderOrder = i );
 
   // event listeners
 
@@ -233,20 +235,6 @@ function setupGestures () {
 
 }
 
-function setupWorker () {
-
-  worker = new Worker('./prm/worker.js', {
-    type: 'module',
-  });
-
-  worker.addEventListener( 'message', (event) => {
-
-    if( event.data.type === 'result' ) onWorkerResult( event );
-          
-  });
-
-}
-
 function updateHitTest ( renderer, frame, onHitTestResultReady, onHitTestResultEmpty, onSessionEnd ) {
 
   const session = renderer.xr.getSession();
@@ -299,10 +287,16 @@ function updateHitTest ( renderer, frame, onHitTestResultReady, onHitTestResultE
   }
 
 }
-
+ 
 function updateUI () {
 
-  if ( display.userData.modes[0] === 'Place' ) {
+  const mode = display.userData.modes[0];
+
+  brush.visible      = ( mode === 'Edit' )
+  selector2D.visible = ( mode === 'Segment2D' );
+  selector3D.visible = ( mode === 'Segment3D' );
+
+  if ( mode === 'Place' ) {
 
     container.material.opacity = 0.2;   
     container.userData.outline.visible = true;
@@ -311,10 +305,6 @@ function updateUI () {
     model.material.uniforms.uModelAlpha.value = 0.8;
     model.material.uniforms.uModelAlphaClip.value = 0.8;
 
-    selector.visible = false;
-
-    brush.visible = false;
-
     screen.userData.monitors.forEach( (monitor) => {
 
       monitor.renderOrder = 1.0;
@@ -323,13 +313,13 @@ function updateUI () {
       const uniforms = monitor.material.uniforms;
       uniforms.uPlaneAlpha.value = 1.0;     
       uniforms.uBrushVisible.value = brush.visible;
-      uniforms.uSelectorVisible.value = selector.visible;
+      uniforms.uSelectorVisible.value = selector3D.visible;
 
     });  
 
   }
 
-  if ( display.userData.modes[0] === 'Inspect' ) {
+  if ( mode === 'Inspect' ) {
 
     container.material.opacity = 0.0;   
     container.userData.outline.visible = true;
@@ -338,10 +328,6 @@ function updateUI () {
     model.material.uniforms.uModelAlpha.value = 0.8;
     model.material.uniforms.uModelAlphaClip.value = 0.4;
    
-    selector.visible = false;
-
-    brush.visible = false;
-
     screen.userData.monitors.forEach( (monitor) => {
 
       monitor.renderOrder = 1.0;
@@ -350,13 +336,13 @@ function updateUI () {
       const uniforms = monitor.material.uniforms;
       uniforms.uPlaneAlpha.value = 1.0;     
       uniforms.uBrushVisible.value = brush.visible;
-      uniforms.uSelectorVisible.value = selector.visible;
+      uniforms.uSelectorVisible.value = selector3D.visible;
 
     });  
 
   }
 
-  if ( display.userData.modes[0] === 'Edit' ) {
+  if ( mode === 'Edit' ) {
 
     container.material.opacity = 0.0;   
     container.userData.outline.visible = false;
@@ -364,11 +350,6 @@ function updateUI () {
     model.visible = false;
     model.material.uniforms.uModelAlpha.value = 0.0;
     model.material.uniforms.uModelAlphaClip.value = 0.0;
-
-    selector.visible = false;
-
-    brush.visible = true;
-    // brush.material.color.set( 0xff0055 );
   
     screen.userData.monitors.forEach( (monitor) => {  
 
@@ -380,13 +361,13 @@ function updateUI () {
       const uniforms = monitor.material.uniforms;
       uniforms.uPlaneAlpha.value = isSelected ? 1.0 : 0.6;
       uniforms.uBrushVisible.value = brush.visible;
-      uniforms.uSelectorVisible.value = selector.visible;
+      uniforms.uSelectorVisible.value = selector3D.visible;
 
     });  
 
   }
 
-  if ( display.userData.modes[0] === 'Segment2D' ) {
+  if ( mode === 'Segment2D' ) {
 
     container.material.opacity = 0.0;   
     container.userData.outline.visible = false;
@@ -394,11 +375,6 @@ function updateUI () {
     model.visible = false;
     model.material.uniforms.uModelAlpha.value = 0.4;
     model.material.uniforms.uModelAlphaClip.value = 0.4;
-
-    selector.visible = false;
-
-    brush.visible = true;
-    brush.material.color.set( 0x0055ff );
 
     screen.userData.monitors.forEach( (monitor) => {  
 
@@ -410,13 +386,13 @@ function updateUI () {
       const uniforms = monitor.material.uniforms;
       uniforms.uPlaneAlpha.value = isSelected ? 1.0 : 0.6;
       uniforms.uBrushVisible.value = brush.visible;
-      uniforms.uSelectorVisible.value = selector.visible;
+      uniforms.uSelectorVisible.value = selector3D.visible;
 
     });  
 
   }
 
-  if ( display.userData.modes[0] === 'Segment3D' ) {
+  if ( mode === 'Segment3D' ) {
 
     container.material.opacity = 0.0;   
     container.userData.outline.visible = false;
@@ -424,10 +400,6 @@ function updateUI () {
     model.visible = false;
     model.material.uniforms.uModelAlpha.value = 0.4;
     model.material.uniforms.uModelAlphaClip.value = 0.4;
-
-    selector.visible = true;
-
-    brush.visible = false;
 
     screen.userData.monitors.forEach( (monitor) => {
 
@@ -437,7 +409,7 @@ function updateUI () {
       const uniforms = monitor.material.uniforms;
       uniforms.uPlaneAlpha.value = 1.0;     
       uniforms.uBrushVisible.value = brush.visible;
-      uniforms.uSelectorVisible.value = selector.visible;
+      uniforms.uSelectorVisible.value = selector3D.visible;
 
     });  
   }
@@ -454,7 +426,8 @@ function setupDisplay () {
   setupModel();
   setupContainer(); 
   setupBrush();
-  setupSelector();
+  setupSelector3D();
+  // setupSelector2D();
 
   // uniforms
 
@@ -487,7 +460,8 @@ function updateDisplay () {
   if ( screen.visible ) updateScreen();
   if ( model.visible) updateModel();
   if ( brush.visible ) updateBrush();
-  if ( selector.visible ) updateSelector();
+  // if ( selector2D.visible ) updateSelector2D();
+  if ( selector3D.visible ) updateSelector3D();
   
   // uniforms
 
@@ -532,6 +506,7 @@ function saveDisplay () {
   display.userData.history.unshift( record );
 
 }
+
 function undoDisplay () {
 
   display.updateMatrix();
@@ -752,6 +727,90 @@ function updateMaskFromVolume () {
 
 }
 
+function resetMask () {  
+
+  for ( let i = 0; i < mask.userData.data0.length; i++ ) {
+
+    mask.userData.texture.image.data[i] = mask.userData.data0[i];
+
+  } 
+  
+  mask.userData.texture.needsUpdate = true;
+
+  // update uniforms
+
+  updateModelUniformsMask();
+  updateScreenUniformsMask();
+
+  computeModelBoundingBox();
+  updateModelUniformsBox();
+
+  updateDisplay();
+}
+
+function undoMask () {
+  
+  if ( mask.userData.history.length > 0 ) {
+
+    updateModel();
+
+    const recordPrevious = mask.userData.history.shift();
+    const recordCurrent = { indices: [ ...recordPrevious.indices ], data: [], box: model.userData.box.clone() };
+
+    // change the data of texture to the previous record
+    // and save the current data to a future record
+    for ( let i = 0; i < recordPrevious.indices.length; i++ ) {
+
+      const n = recordPrevious.indices[ i ];
+      recordCurrent.data.push( mask.userData.texture.image.data[ n ] );
+      mask.userData.texture.image.data[ n ] = recordPrevious.data[ i ];
+
+    }
+
+    mask.userData.future.unshift( recordCurrent );
+    mask.userData.texture.needsUpdate = true;
+    model.userData.box.copy( recordPrevious.box );
+
+    updateModelUniformsBox();
+    updateModelUniformsMask();
+    updateScreenUniformsMask();
+
+    updateModel();
+    updateScreen();
+
+  }
+  
+}
+
+function redoMask () {
+  
+  if ( mask.userData.future.length > 0 ) {
+
+    updateModel();
+
+    const recordNext = mask.userData.future.shift();
+    const recordCurrent = { indices: [ ...recordNext.indices ], data: [], box: model.userData.box.clone() };
+
+    for ( let i = 0; i < recordNext.indices.length; i++ ) {
+
+      const n = recordNext.indices[ i ];
+      recordCurrent.data.push( mask.userData.texture.image.data[ n ] );
+      mask.userData.texture.image.data[ n ] = recordNext.data[ i ];
+
+    }
+
+    mask.userData.history.unshift( recordCurrent );
+    mask.userData.texture.needsUpdate = true;
+    model.userData.box.copy( recordNext.box );
+
+    updateModelUniforms();
+    updateScreenUniforms();
+
+  }
+
+}
+
+
 // container
 
 function setupContainer() { 
@@ -864,6 +923,7 @@ function setupScreen () {
     monitor.matrixAutoUpdate = false;
     monitor.updateMatrix();
     
+    // in screen local coordinates
     const normal = new THREE.Vector3( 0, 0, 1 );
     monitor.userData.plane = new THREE.Plane( normal, 0 ).applyMatrix4( monitor.matrix );
     monitor.userData.plane0 = new THREE.Plane().copy( monitor.userData.plane );
@@ -1014,6 +1074,103 @@ function intersectsScreenCenter ( rayOrOrigin, direction ) {
 
 }
 
+
+function resetScreen () {
+
+  saveScreen( event );
+
+  screen.position.copy( new THREE.Vector3() );
+  screen.quaternion.copy( new THREE.Quaternion() );   
+  screen.userData.monitors.forEach( (monitor) => {
+
+    const uniforms = monitor.material.uniforms;
+    uniforms.uPlaneVisible.value = true;
+
+  });
+
+  updateDisplay();
+  
+}
+
+function saveScreen () {
+
+  screen.updateMatrix();
+
+  const record = { 
+
+    matrix: screen.matrix.clone(),
+    visible: screen.userData.monitors.map( (monitor) => monitor.material.uniforms.uPlaneVisible.value ),
+
+  };
+
+  screen.userData.history.unshift( record );
+
+}
+
+function undoScreen () {
+
+  screen.updateMatrix();
+
+  const record = { 
+
+    matrix: screen.matrix.clone(),
+    visible: screen.userData.monitors.map( (monitor) => monitor.material.uniforms.uPlaneVisible.value ),
+
+  };
+
+  screen.userData.future.unshift( record );
+
+  if ( screen.userData.history.length > 0 ) {
+
+    const record = screen.userData.history.shift();
+
+    screen.matrix.copy( record.matrix );
+    screen.matrix.decompose( screen.position, screen.quaternion, screen.scale ); 
+
+    screen.userData.monitors.forEach( (monitor, i) => {
+
+      monitor.material.uniforms.uPlaneVisible.value = record.visible[i];
+
+    } );
+
+    updateDisplay();
+
+  }
+  
+}
+
+function redoScreen () {
+  
+  screen.updateMatrix();
+
+  const record = { 
+
+    matrix: screen.matrix.clone(),
+    visible: screen.userData.monitors.map( (monitor) => monitor.material.uniforms.uPlaneVisible.value ),
+
+  };
+
+  screen.userData.history.unshift( record );
+
+  if ( screen.userData.future.length > 0 ) {
+
+    const record = screen.userData.future.shift();
+
+    screen.matrix.copy( record.matrix );
+    screen.matrix.decompose( screen.position, screen.quaternion, screen.scale ); 
+
+    screen.userData.monitors.forEach( (monitor, i) => {
+
+      monitor.material.uniforms.uPlaneVisible.value = record.visible[i];
+
+    } );
+
+    updateDisplay();
+
+  }
+
+}
+
 // model
 
 function setupModel () {
@@ -1130,15 +1287,18 @@ function updateBrush () {
   brush.userData.sphere.copy( brush.userData.sphere0 ).applyMatrix4( brush.matrix ); // in display coordinates
   brush.userData.box.copy( brush.userData.box0 ).applyMatrix4( brush.matrix );
 
+  projectBrushOnScreen();
+
+}
+
+function projectBrushOnScreen() {
+ 
   let intersections = intersectScreen( gestures.raycasters.view.ray );
 
   // filter invisible screen monitors and select the first monitor
-  const selected = intersections.filter( (monitor) => {
+  const selected = intersections.filter( (monitor) => monitor.object.material.uniforms.uPlaneVisible.value) [0];
 
-    return monitor.object.material.uniforms.uPlaneVisible.value;
-
-  }) [0];
-
+  // copy intersection position to brush
   brush.userData.monitorIndex = undefined;
 
   if ( selected ) {
@@ -1146,71 +1306,66 @@ function updateBrush () {
     brush.userData.monitorIndex = selected.object.userData.index;
     brush.userData.plane.copy( selected.object.userData.plane );
     brush.position.copy( display.worldToLocal( selected.point ) );
-
     brush.updateMatrix();    
 
     updateUI();
 
-  }     
+  }    
 
 }
 
-// selector 
+// selector2D
 
-function setupSelector () {
+
+function setupSelector2D () {
   
-  selector.clear();
-
   const boxSize = new THREE.Vector3( 1, 1, 1 );
-  selector.geometry = new THREE.BoxGeometry( ...boxSize.toArray() );
-  selector.material = new THREE.MeshBasicMaterial( { 
+
+  selector2D.clear();
+  selector2D.geometry = new THREE.BoxGeometry( ...boxSize.toArray() );
+  selector2D.material = new THREE.MeshBasicMaterial( { 
     color: 0x0055ff, 
     side: THREE.DoubleSide, 
-    visible: true, 
+    visible: false, 
     transparent: true,
     opacity: 0.1,
   });
  
   // setup selector objects
 
-  selector.geometry.computeBoundingBox();
-  selector.userData.pointLength = boxSize.length() * 0.04;
-  selector.userData.pointScalar = 2;
-  selector.userData.history = [];
-  selector.userData.future = [];
+  selector2D.geometry.computeBoundingBox();
+  selector2D.userData.pointLength = boxSize.length() * 0.04;
+  selector2D.userData.pointScalar = 2;
+  selector2D.userData.history = [];
+  selector2D.userData.future = [];
 
-  setupSelectorOutline();
-  setupSelectorObb();
-  setupSelectorVertices();
-  setupSelectorFaces();
-
-  // update selector scale size
-
-  selector.scale.copy( volume.userData.size );
-  selector.updateMatrix();
+  setupSelectorOutline2D();
+  setupSelectorObb2D();
+  setupSelectorVertices2D();
+  setupSelectorFaces2D();
 
 }
 
-function setupSelectorOutline () {
+function setupSelectorOutline2D () {
 
-  selector.userData.outline = new THREE.Box3Helper( selector.geometry.boundingBox, selector.material.color );
-  selector.add( selector.userData.outline );  
+  selector2D.userData.outline = new THREE.Box3Helper( selector2D.geometry.boundingBox, selector2D.material.color );
+  selector2D.add( selector2D.userData.outline );  
 
 }
 
-function setupSelectorObb () {
+function setupSelectorObb2D () {
   
-  selector.userData.obb = new OBB().fromBox3( selector.geometry.boundingBox );
-  selector.userData.obb0 = selector.userData.obb.clone();
+  selector2D.userData.obb = new OBB().fromBox3( selector2D.geometry.boundingBox );
+  selector2D.userData.obb0 = selector2D.userData.obb.clone();
 
 }
 
-function setupSelectorVertices () {
+function setupSelectorVertices2D () {
    
   const halfSize = new THREE.Vector3(
-    selector.geometry.parameters.width,
-    selector.geometry.parameters.height,
-    selector.geometry.parameters.depth,
+    selector2D.geometry.parameters.width,
+    selector2D.geometry.parameters.height,
+    selector2D.geometry.parameters.depth,
   ).divideScalar(2);
 
   const positions = [
@@ -1226,8 +1381,8 @@ function setupSelectorVertices () {
 
   // add meshed to vertices
 
-  const size = new THREE.Vector3().addScalar( selector.userData.pointLength );
-  const radiusExpand = 2 * selector.userData.pointLength / 3 * selector.userData.pointScalar;
+  const size = new THREE.Vector3().addScalar( selector2D.userData.pointLength );
+  const radiusExpand = 2 * selector2D.userData.pointLength / 3 * selector2D.userData.pointScalar;
   const geometry = new THREE.BoxGeometry( ...size.toArray() );
   const material = new THREE.MeshBasicMaterial( { 
 
@@ -1241,31 +1396,31 @@ function setupSelectorVertices () {
 
   });
   
-  selector.userData.vertices = new Array( positions.length ).fill();
+  selector2D.userData.vertices = new Array( positions.length ).fill();
 
   for ( let i = 0; i < positions.length; i++ ) {
 
-    selector.userData.vertices[i] = new THREE.Mesh( geometry, material ); 
-    selector.userData.vertices[i].position.copy( positions[i] );
-    selector.userData.vertices[i].matrixAutoUpdate = false;
-    selector.userData.vertices[i].renderOrder = selector.renderOrder - 0.5;
+    selector2D.userData.vertices[i] = new THREE.Mesh( geometry, material ); 
+    selector2D.userData.vertices[i].position.copy( positions[i] );
+    selector2D.userData.vertices[i].matrixAutoUpdate = false;
+    selector2D.userData.vertices[i].renderOrder = selector2D.renderOrder - 0.5;
 
-    selector.userData.vertices[i].userData.sphere = new THREE.Sphere( new THREE.Vector3(), radiusExpand );
-    selector.userData.vertices[i].userData.sphere0 = selector.userData.vertices[i].userData.sphere.clone();
+    selector2D.userData.vertices[i].userData.sphere = new THREE.Sphere( new THREE.Vector3(), radiusExpand );
+    selector2D.userData.vertices[i].userData.sphere0 = selector2D.userData.vertices[i].userData.sphere.clone();
 
-    selector.add( selector.userData.vertices[i] );
+    selector2D.add( selector2D.userData.vertices[i] );
 
   }
 
 
 }
 
-function setupSelectorFaces () {
+function setupSelectorFaces2D () {
 
   const halfSize = new THREE.Vector3(
-    selector.geometry.parameters.width,
-    selector.geometry.parameters.height,
-    selector.geometry.parameters.depth,
+    selector2D.geometry.parameters.width,
+    selector2D.geometry.parameters.height,
+    selector2D.geometry.parameters.depth,
   ).divideScalar(2);
 
   const positions = [
@@ -1279,8 +1434,8 @@ function setupSelectorFaces () {
 
   // add meshed to vertices
 
-  const radius = 2 * selector.userData.pointLength / 3; 
-  const radiusExpand = radius * selector.userData.pointScalar;
+  const radius = 2 * selector2D.userData.pointLength / 3; 
+  const radiusExpand = radius * selector2D.userData.pointScalar;
   const geometry = new THREE.SphereGeometry( radius );
   const material = new THREE.MeshBasicMaterial( { 
 
@@ -1294,45 +1449,45 @@ function setupSelectorFaces () {
 
   });
   
-  selector.userData.faces = new Array( positions.length ).fill();
+  selector2D.userData.faces = new Array( positions.length ).fill();
 
   for ( let i = 0; i < positions.length; i++ ) {
 
-    selector.userData.faces[i] = new THREE.Mesh( geometry, material ); 
-    selector.userData.faces[i].position.copy( positions[i] );
-    selector.userData.faces[i].matrixAutoUpdate = false;
-    selector.userData.faces[i].renderOrder = selector.renderOrder - 0.5;
+    selector2D.userData.faces[i] = new THREE.Mesh( geometry, material ); 
+    selector2D.userData.faces[i].position.copy( positions[i] );
+    selector2D.userData.faces[i].matrixAutoUpdate = false;
+    selector2D.userData.faces[i].renderOrder = selector2D.renderOrder - 0.5;
 
-    selector.userData.faces[i].userData.sphere = new THREE.Sphere( new THREE.Vector3(), radiusExpand );
-    selector.userData.faces[i].userData.sphere0 = selector.userData.faces[i].userData.sphere.clone();
+    selector2D.userData.faces[i].userData.sphere = new THREE.Sphere( new THREE.Vector3(), radiusExpand );
+    selector2D.userData.faces[i].userData.sphere0 = selector2D.userData.faces[i].userData.sphere.clone();
 
-    selector.add( selector.userData.faces[i] );
+    selector2D.add( selector2D.userData.faces[i] );
 
   }
 
 }
 
-function updateSelector () {
+function updateSelector2D () {
 
-  updateSelectorObb();
-  updateSelectorVertices();
-  updateSelectorFaces();
-
-}
-
-function updateSelectorObb () {
-
-  selector.userData.obb.copy( selector.userData.obb0 ).applyMatrix4( selector.matrixWorld );
+  updateSelectorObb2D();
+  updateSelectorVertices2D();
+  updateSelectorFaces2D();
 
 }
 
-function updateSelectorVertices () {
+function updateSelectorObb2D () {
 
-  for ( let vertex, i = 0; i < selector.userData.vertices.length; i++ ) {
+  selector2D.userData.obb.copy( selector2D.userData.obb0 ).applyMatrix4( selector2D.matrixWorld );
 
-    vertex = selector.userData.vertices[i];
+}
 
-    vertex.scale.set( 1, 1, 1 ).divide( selector.scale ).multiplyScalar( (selector.scale.x + selector.scale.y + selector.scale.z) / 3 );
+function updateSelectorVertices2D () {
+
+  for ( let vertex, i = 0; i < selector2D.userData.vertices.length; i++ ) {
+
+    vertex = selector2D.userData.vertices[i];
+
+    vertex.scale.set( 1, 1, 1 ).divide( selector2D.scale ).multiplyScalar( (selector2D.scale.x + selector2D.scale.y + selector2D.scale.z) / 3 );
     vertex.updateMatrix();
     
     vertex.userData.sphere.copy( vertex.userData.sphere0 ).applyMatrix4( vertex.matrixWorld );
@@ -1341,13 +1496,13 @@ function updateSelectorVertices () {
 
 }
 
-function updateSelectorFaces () {
+function updateSelectorFaces2D () {
 
-  for ( let face, i = 0; i < selector.userData.faces.length; i++ ) {
+  for ( let face, i = 0; i < selector2D.userData.faces.length; i++ ) {
 
-    face = selector.userData.faces[i];
+    face = selector2D.userData.faces[i];
 
-    face.scale.set( 1, 1, 1 ).divide( selector.scale ).multiplyScalar( (selector.scale.x + selector.scale.y + selector.scale.z) / 3 );
+    face.scale.set( 1, 1, 1 ).divide( selector2D.scale ).multiplyScalar( (selector2D.scale.x + selector2D.scale.y + selector2D.scale.z) / 3 );
     face.updateMatrix();
     
     face.userData.sphere.copy( face.userData.sphere0 ).applyMatrix4( face.matrixWorld );
@@ -1356,7 +1511,7 @@ function updateSelectorFaces () {
 
 }
 
-function intersectSelectorObb ( rayOrOrigin, direction ) {
+function intersectSelectorObb2D ( rayOrOrigin, direction ) {
 
   if ( rayOrOrigin instanceof THREE.Ray && direction === undefined ) {
 
@@ -1368,7 +1523,7 @@ function intersectSelectorObb ( rayOrOrigin, direction ) {
 
   }
 
-  let intersections = raycaster.intersectObject( selector, false );
+  let intersections = raycaster.intersectObject( selector2D, false );
 
   // remove duplicates
 
@@ -1382,7 +1537,7 @@ function intersectSelectorObb ( rayOrOrigin, direction ) {
 
 }
 
-function intersectSelectorVertices ( rayOrOrigin, direction ) {
+function intersectSelectorVertices2D ( rayOrOrigin, direction ) {
 
   if ( rayOrOrigin instanceof THREE.Ray && direction === undefined ) {
 
@@ -1399,9 +1554,9 @@ function intersectSelectorVertices ( rayOrOrigin, direction ) {
   let indices = [];
   let points = [];  
 
-  for ( let i = 0; i < selector.userData.vertices.length; i++ ) {
+  for ( let i = 0; i < selector2D.userData.vertices.length; i++ ) {
 
-    let vertex = selector.userData.vertices[i];
+    let vertex = selector2D.userData.vertices[i];
 
     points.push( raycaster.ray.intersectSphere( vertex.userData.sphere, new THREE.Vector3() ) );
 
@@ -1436,7 +1591,7 @@ function intersectSelectorVertices ( rayOrOrigin, direction ) {
 
     intersections.push( {
   
-      object: selector.userData.vertices[n],
+      object: selector2D.userData.vertices[n],
       point: points[n],
       distance: distance[n],
   
@@ -1448,7 +1603,7 @@ function intersectSelectorVertices ( rayOrOrigin, direction ) {
 
 }
 
-function intersectSelectorFaces ( rayOrOrigin, direction ) {
+function intersectSelectorFaces2D ( rayOrOrigin, direction ) {
 
   if ( rayOrOrigin instanceof THREE.Ray && direction === undefined ) {
 
@@ -1465,9 +1620,9 @@ function intersectSelectorFaces ( rayOrOrigin, direction ) {
   let indices = [];
   let points = [];  
 
-  for ( let i = 0; i < selector.userData.faces.length; i++ ) {
+  for ( let i = 0; i < selector2D.userData.faces.length; i++ ) {
 
-    let face = selector.userData.faces[i];
+    let face = selector2D.userData.faces[i];
 
     points.push( raycaster.ray.intersectSphere( face.userData.sphere, new THREE.Vector3() ) );
 
@@ -1502,7 +1657,7 @@ function intersectSelectorFaces ( rayOrOrigin, direction ) {
 
     intersections.push( {
   
-      object: selector.userData.faces[n],
+      object: selector2D.userData.faces[n],
       point: points[n],
       distance: distance[n],
   
@@ -1514,72 +1669,502 @@ function intersectSelectorFaces ( rayOrOrigin, direction ) {
 
 }
 
-function intersectsSelector ( rayOrOrigin, direction ) {
+function intersectsSelector2D ( rayOrOrigin, direction ) {
 
-  if ( intersectSelectorVertices( rayOrOrigin, direction ).length > 0 ) return 'vertex';
-  if ( intersectSelectorFaces ( rayOrOrigin, direction ).length > 0 ) return 'face';
-  if ( intersectSelectorObb ( rayOrOrigin, direction ).length > 0 ) return 'obb';
+  if ( intersectSelectorVertices2D( rayOrOrigin, direction ).length > 0 ) return 'vertex';
+  if ( intersectSelectorFaces2D ( rayOrOrigin, direction ).length > 0 ) return 'face';
+  if ( intersectSelectorObb2D ( rayOrOrigin, direction ).length > 0 ) return 'obb';
 
   return false;
 
 }
 
-function resetSelector () {
+function resetSelector2D () {
 
-  saveSelector( event );
+  saveSelector2D( event );
 
-  selector.position.set( 0, 0, 0 );
-  selector.scale.copy( volume.userData.size );
-  selector.updateMatrix();
+  selector2D.position.set( 0, 0, 0 );
+  selector2D.scale.copy( volume.userData.size );
+  selector2D.updateMatrix();
 
-  updateSelector();  
+  updateSelector2D();  
   
 }
 
-function saveSelector () {
+function saveSelector2D () {
 
-  selector.updateMatrix();
+  selector2D.updateMatrix();
 
   const record = { 
-    matrix: selector.matrix.clone(),
+    matrix: selector2D.matrix.clone(),
   };
 
-  selector.userData.history.unshift( record );
+  selector2D.userData.history.unshift( record );
 
 }
 
-function undoSelector () {
+function undoSelector2D () {
 
-  selector.updateMatrix();
+  selector2D.updateMatrix();
 
-  const record = { matrix: selector.matrix.clone() };
+  const record = { matrix: selector2D.matrix.clone() };
 
-  selector.userData.future.unshift( record );
+  selector2D.userData.future.unshift( record );
 
-  if ( selector.userData.history.length > 0) {
+  if ( selector2D.userData.history.length > 0) {
 
-    selector.matrix.copy( selector.userData.history.shift().matrix );
-    selector.matrix.decompose( selector.position, selector.quaternion, selector.scale ); 
+    selector2D.matrix.copy( selector2D.userData.history.shift().matrix );
+    selector2D.matrix.decompose( selector2D.position, selector2D.quaternion, selector2D.scale ); 
 
-    updateSelector();
+    updateSelector2D();
 
   }
   
 }
 
-function redoSelector () {
+function redoSelector2D () {
 
-  selector.updateMatrix();
+  selector2D.updateMatrix();
 
-  const record = { matrix: selector.matrix.clone() };
-  selector.userData.history.unshift( record );
+  const record = { matrix: selector2D.matrix.clone() };
+  selector2D.userData.history.unshift( record );
 
-  if ( selector.userData.future.length > 0) {
+  if ( selector2D.userData.future.length > 0) {
 
-    selector.matrix.copy( selector.userData.future.shift().matrix );
-    selector.matrix.decompose( selector.position, selector.quaternion, selector.scale ); 
+    selector2D.matrix.copy( selector2D.userData.future.shift().matrix );
+    selector2D.matrix.decompose( selector2D.position, selector2D.quaternion, selector2D.scale ); 
 
-    updateSelector();
+    updateSelector3D();
+
+  }
+
+}
+
+// selector3D
+
+function setupSelector3D () {
+  
+  selector3D.clear();
+
+  const boxSize = new THREE.Vector3( 1, 1, 1 );
+  selector3D.geometry = new THREE.BoxGeometry( ...boxSize.toArray() );
+  selector3D.material = new THREE.MeshBasicMaterial( { 
+    color: 0x0055ff, 
+    side: THREE.DoubleSide, 
+    visible: true, 
+    transparent: true,
+    opacity: 0.1,
+  });
+ 
+  // setup selector objects
+
+  selector3D.geometry.computeBoundingBox();
+  selector3D.userData.pointLength = boxSize.length() * 0.04;
+  selector3D.userData.pointScalar = 2;
+  selector3D.userData.history = [];
+  selector3D.userData.future = [];
+
+  setupSelectorOutline3D();
+  setupSelectorObb3D();
+  setupSelectorVertices3D();
+  setupSelectorFaces3D();
+
+  // update selector scale size
+
+  selector3D.scale.copy( volume.userData.size );
+  selector3D.updateMatrix();
+
+}
+
+function setupSelectorOutline3D () {
+
+  selector3D.userData.outline = new THREE.Box3Helper( selector3D.geometry.boundingBox, selector3D.material.color );
+  selector3D.add( selector3D.userData.outline );  
+
+}
+
+function setupSelectorObb3D () {
+  
+  selector3D.userData.obb = new OBB().fromBox3( selector3D.geometry.boundingBox );
+  selector3D.userData.obb0 = selector3D.userData.obb.clone();
+
+}
+
+function setupSelectorVertices3D () {
+   
+  const halfSize = new THREE.Vector3(
+    selector3D.geometry.parameters.width,
+    selector3D.geometry.parameters.height,
+    selector3D.geometry.parameters.depth,
+  ).divideScalar(2);
+
+  const positions = [
+    new THREE.Vector3(  halfSize.x,  halfSize.y,  halfSize.z ),
+    new THREE.Vector3(  halfSize.x,  halfSize.y, -halfSize.z ),
+    new THREE.Vector3(  halfSize.x, -halfSize.y,  halfSize.z ),
+    new THREE.Vector3(  halfSize.x, -halfSize.y, -halfSize.z ),
+    new THREE.Vector3( -halfSize.x,  halfSize.y,  halfSize.z ),
+    new THREE.Vector3( -halfSize.x,  halfSize.y, -halfSize.z ),
+    new THREE.Vector3( -halfSize.x, -halfSize.y,  halfSize.z ),
+    new THREE.Vector3( -halfSize.x, -halfSize.y, -halfSize.z ),
+  ]
+
+  // add meshed to vertices
+
+  const size = new THREE.Vector3().addScalar( selector3D.userData.pointLength );
+  const radiusExpand = 2 * selector3D.userData.pointLength / 3 * selector3D.userData.pointScalar;
+  const geometry = new THREE.BoxGeometry( ...size.toArray() );
+  const material = new THREE.MeshBasicMaterial( { 
+
+    color: 0x0055ff, 
+    side: THREE.DoubleSide, 
+    visible: true, 
+    transparent: true,
+    opacity: 0.5,
+    depthTest: true,
+    depthWrite: false,
+
+  });
+  
+  selector3D.userData.vertices = new Array( positions.length ).fill();
+
+  for ( let i = 0; i < positions.length; i++ ) {
+
+    selector3D.userData.vertices[i] = new THREE.Mesh( geometry, material ); 
+    selector3D.userData.vertices[i].position.copy( positions[i] );
+    selector3D.userData.vertices[i].matrixAutoUpdate = false;
+    selector3D.userData.vertices[i].renderOrder = selector3D.renderOrder - 0.5;
+
+    selector3D.userData.vertices[i].userData.sphere = new THREE.Sphere( new THREE.Vector3(), radiusExpand );
+    selector3D.userData.vertices[i].userData.sphere0 = selector3D.userData.vertices[i].userData.sphere.clone();
+
+    selector3D.add( selector3D.userData.vertices[i] );
+
+  }
+
+
+}
+
+function setupSelectorFaces3D () {
+
+  const halfSize = new THREE.Vector3(
+    selector3D.geometry.parameters.width,
+    selector3D.geometry.parameters.height,
+    selector3D.geometry.parameters.depth,
+  ).divideScalar(2);
+
+  const positions = [
+    new THREE.Vector3(  halfSize.x, 0, 0 ),
+    new THREE.Vector3( -halfSize.x, 0, 0 ),
+    new THREE.Vector3( 0,  halfSize.y, 0 ),
+    new THREE.Vector3( 0, -halfSize.y, 0 ),
+    new THREE.Vector3( 0, 0,  halfSize.z ),
+    new THREE.Vector3( 0, 0, -halfSize.z ),
+  ]
+
+  // add meshed to vertices
+
+  const radius = 2 * selector3D.userData.pointLength / 3; 
+  const radiusExpand = radius * selector3D.userData.pointScalar;
+  const geometry = new THREE.SphereGeometry( radius );
+  const material = new THREE.MeshBasicMaterial( { 
+
+    color: 0xffff55, // 0x0055ff, 
+    side: THREE.DoubleSide, 
+    visible: true, 
+    transparent: true,
+    opacity: 0.5,
+    depthTest: false,
+    depthWrite: false,
+
+  });
+  
+  selector3D.userData.faces = new Array( positions.length ).fill();
+
+  for ( let i = 0; i < positions.length; i++ ) {
+
+    selector3D.userData.faces[i] = new THREE.Mesh( geometry, material ); 
+    selector3D.userData.faces[i].position.copy( positions[i] );
+    selector3D.userData.faces[i].matrixAutoUpdate = false;
+    selector3D.userData.faces[i].renderOrder = selector3D.renderOrder - 0.5;
+
+    selector3D.userData.faces[i].userData.sphere = new THREE.Sphere( new THREE.Vector3(), radiusExpand );
+    selector3D.userData.faces[i].userData.sphere0 = selector3D.userData.faces[i].userData.sphere.clone();
+
+    selector3D.add( selector3D.userData.faces[i] );
+
+  }
+
+}
+
+function updateSelector3D () {
+
+  updateSelectorObb3D();
+  updateSelectorVertices3D();
+  updateSelectorFaces3D();
+
+}
+
+function updateSelectorObb3D () {
+
+  selector3D.userData.obb.copy( selector3D.userData.obb0 ).applyMatrix4( selector3D.matrixWorld );
+
+}
+
+function updateSelectorVertices3D () {
+
+  for ( let vertex, i = 0; i < selector3D.userData.vertices.length; i++ ) {
+
+    vertex = selector3D.userData.vertices[i];
+
+    vertex.scale.set( 1, 1, 1 ).divide( selector3D.scale ).multiplyScalar( (selector3D.scale.x + selector3D.scale.y + selector3D.scale.z) / 3 );
+    vertex.updateMatrix();
+    
+    vertex.userData.sphere.copy( vertex.userData.sphere0 ).applyMatrix4( vertex.matrixWorld );
+
+  }
+
+}
+
+function updateSelectorFaces3D () {
+
+  for ( let face, i = 0; i < selector3D.userData.faces.length; i++ ) {
+
+    face = selector3D.userData.faces[i];
+
+    face.scale.set( 1, 1, 1 ).divide( selector3D.scale ).multiplyScalar( (selector3D.scale.x + selector3D.scale.y + selector3D.scale.z) / 3 );
+    face.updateMatrix();
+    
+    face.userData.sphere.copy( face.userData.sphere0 ).applyMatrix4( face.matrixWorld );
+
+  }
+
+}
+
+function intersectSelectorObb3D ( rayOrOrigin, direction ) {
+
+  if ( rayOrOrigin instanceof THREE.Ray && direction === undefined ) {
+
+    raycaster.set( rayOrOrigin.origin, rayOrOrigin.direction );
+
+  } else {
+
+    raycaster.set( rayOrOrigin, direction );
+
+  }
+
+  let intersections = raycaster.intersectObject( selector3D, false );
+
+  // remove duplicates
+
+  intersections = intersections.filter( (intersection0, i) => {
+
+    return ! intersections.slice( i + 1 ).some( (intersection1) => Math.abs( intersection1.distance - intersection0.distance ) < 1e-6 );
+
+  });
+
+  return intersections;
+
+}
+
+function intersectSelectorVertices3D ( rayOrOrigin, direction ) {
+
+  if ( rayOrOrigin instanceof THREE.Ray && direction === undefined ) {
+
+    raycaster.set( rayOrOrigin.origin, rayOrOrigin.direction );
+
+  } else {
+
+    raycaster.set( rayOrOrigin, direction );
+
+  }
+
+  // get ray intersection with vertex sphere
+
+  let indices = [];
+  let points = [];  
+
+  for ( let i = 0; i < selector3D.userData.vertices.length; i++ ) {
+
+    let vertex = selector3D.userData.vertices[i];
+
+    points.push( raycaster.ray.intersectSphere( vertex.userData.sphere, new THREE.Vector3() ) );
+
+    indices.push( i );
+
+  }
+
+  // sort intersections based on distance from camera
+
+  indices = indices.filter( (i) => points[i] instanceof THREE.Vector3 );
+
+  let distance = [];
+
+  for ( let i = 0; i < indices.length; i++ ) {
+    
+    let n = indices[i];
+
+    distance.push( points[n].distanceTo( raycaster.ray.origin ) );
+
+  }
+
+  indices.sort( (i, j) => distance[i] - distance[j] );
+
+
+  // create intersection object
+
+  let intersections = [];
+
+  for ( let i = 0; i < indices.length; i++ ) {
+
+    let n = indices[i];
+
+    intersections.push( {
+  
+      object: selector3D.userData.vertices[n],
+      point: points[n],
+      distance: distance[n],
+  
+    } );
+
+  } 
+ 
+  return intersections;
+
+}
+
+function intersectSelectorFaces3D ( rayOrOrigin, direction ) {
+
+  if ( rayOrOrigin instanceof THREE.Ray && direction === undefined ) {
+
+    raycaster.set( rayOrOrigin.origin, rayOrOrigin.direction );
+
+  } else {
+
+    raycaster.set( rayOrOrigin, direction );
+
+  }
+
+  // get ray intersection with vertex sphere
+
+  let indices = [];
+  let points = [];  
+
+  for ( let i = 0; i < selector3D.userData.faces.length; i++ ) {
+
+    let face = selector3D.userData.faces[i];
+
+    points.push( raycaster.ray.intersectSphere( face.userData.sphere, new THREE.Vector3() ) );
+
+    indices.push( i );
+
+  }
+
+  // sort intersections based on distance from camera
+
+  indices = indices.filter( (i) => points[i] instanceof THREE.Vector3 );
+
+  let distance = [];
+
+  for ( let i = 0; i < indices.length; i++ ) {
+    
+    let n = indices[i];
+
+    distance.push( points[n].distanceTo( raycaster.ray.origin ) );
+
+  }
+
+  indices.sort( (i, j) => distance[i] - distance[j] );
+
+  
+  // create intersection object
+
+  let intersections = [];
+
+  for ( let i = 0; i < indices.length; i++ ) {
+
+    let n = indices[i];
+
+    intersections.push( {
+  
+      object: selector3D.userData.faces[n],
+      point: points[n],
+      distance: distance[n],
+  
+    } );
+
+  } 
+ 
+  return intersections;
+
+}
+
+function intersectsSelector3D ( rayOrOrigin, direction ) {
+
+  if ( intersectSelectorVertices3D( rayOrOrigin, direction ).length > 0 ) return 'vertex';
+  if ( intersectSelectorFaces3D ( rayOrOrigin, direction ).length > 0 ) return 'face';
+  if ( intersectSelectorObb3D ( rayOrOrigin, direction ).length > 0 ) return 'obb';
+
+  return false;
+
+}
+
+function resetSelector3D () {
+
+  saveSelector3D( event );
+
+  selector3D.position.set( 0, 0, 0 );
+  selector3D.scale.copy( volume.userData.size );
+  selector3D.updateMatrix();
+
+  updateSelector3D();  
+  
+}
+
+function saveSelector3D () {
+
+  selector3D.updateMatrix();
+
+  const record = { 
+    matrix: selector3D.matrix.clone(),
+  };
+
+  selector3D.userData.history.unshift( record );
+
+}
+
+function undoSelector3D () {
+
+  selector3D.updateMatrix();
+
+  const record = { matrix: selector3D.matrix.clone() };
+
+  selector3D.userData.future.unshift( record );
+
+  if ( selector3D.userData.history.length > 0) {
+
+    selector3D.matrix.copy( selector3D.userData.history.shift().matrix );
+    selector3D.matrix.decompose( selector3D.position, selector3D.quaternion, selector3D.scale ); 
+
+    updateSelector3D();
+
+  }
+  
+}
+
+function redoSelector3D () {
+
+  selector3D.updateMatrix();
+
+  const record = { matrix: selector3D.matrix.clone() };
+  selector3D.userData.history.unshift( record );
+
+  if ( selector3D.userData.future.length > 0) {
+
+    selector3D.matrix.copy( selector3D.userData.future.shift().matrix );
+    selector3D.matrix.decompose( selector3D.position, selector3D.quaternion, selector3D.scale ); 
+
+    updateSelector3D();
 
   }
 
@@ -1714,8 +2299,8 @@ function setupScreenUniformsSelector() {
     const uniforms = monitor.material.uniforms;
 
     // static
-    uniforms.uSelectorColor = { value:  selector.material.color };
-    uniforms.uSelectorOpacity = { value: selector.material.opacity };
+    uniforms.uSelectorColor = { value:  selector3D.material.color };
+    uniforms.uSelectorOpacity = { value: selector3D.material.opacity };
 
     // dynamic
     uniforms.uSelectorVisible = { value : false };
@@ -1783,9 +2368,9 @@ function updateScreenUniformsSelector() {
 
     const uniforms = monitor.material.uniforms;
 
-    uniforms.uSelectorVisible.value = selector.visible;
-    uniforms.uSelectorSize.value.copy( selector.scale ).divide( volume.userData.size );
-    uniforms.uSelectorCenter.value.copy( selector.position ).divide( volume.userData.size );
+    uniforms.uSelectorVisible.value = selector3D.visible;
+    uniforms.uSelectorSize.value.copy( selector3D.scale ).divide( volume.userData.size );
+    uniforms.uSelectorCenter.value.copy( selector3D.position ).divide( volume.userData.size );
    
   });
 
@@ -1947,7 +2532,7 @@ function onVolumeUpload ( event ) {
     setupScreen();
     setupModel();
     setupContainer(); 
-    setupSelector();
+    setupSelector3D();
     setupScreenUniforms();
     setupModelUniforms();
 
@@ -1957,8 +2542,6 @@ function onVolumeUpload ( event ) {
     updateUI();
 
     display.visible = true;
-
-    // runSegmentation();
 
   });
 }
@@ -1973,7 +2556,7 @@ function onMaskUpload ( event ) {
     setupScreen();
     setupModel();
     setupContainer(); 
-    setupSelector();
+    setupSelector3D();
     setupScreenUniforms();
     setupModelUniforms();
 
@@ -2029,7 +2612,6 @@ function onButton ( event ) {
   hitTestSourceRequested = false;
   hitTestSource = null;
 
-
 }
 
 function onHitTestResultReady ( hitPoseTransformed ) {
@@ -2063,12 +2645,6 @@ function onSessionEnd () {
 
 }
 
-function onWorkerResult( event ) {
-
-  const { mask, scores } = event.data.data;
-
-}
-
 // gestures
   
 function onPolytap ( event ) {
@@ -2080,7 +2656,7 @@ function onPolytap ( event ) {
     if ( display.userData.modes[0] === 'Place' ) ;
     if ( display.userData.modes[0] === 'Inspect' ) ;
     if ( display.userData.modes[0] === 'Edit' ) ;
-    if ( display.userData.modes[0] === 'Segment2D' ) onGestureSegmentSlice( event );
+    if ( display.userData.modes[0] === 'Segment2D' ) ;
     if ( display.userData.modes[0] === 'Segment3D' ) ;
 
   }
@@ -2090,7 +2666,7 @@ function onPolytap ( event ) {
     if ( display.userData.modes[0] === 'Inspect' ) onGestureHideScreenMonitor( event );
     if ( display.userData.modes[0] === 'Edit' ) onGestureToggleBrush( event );
     if ( display.userData.modes[0] === 'Segment2D' ) ;
-    if ( display.userData.modes[0] === 'Segment3D' ) onGestureUpdateSegmentation( event );
+    if ( display.userData.modes[0] === 'Segment3D' ) onGestureUpdateSegmentation3D( event );
 
   }
 
@@ -2109,7 +2685,7 @@ function onSwipe ( event ) {
     if ( display.userData.modes[0] === 'Inspect' ) undoScreen( event );
     if ( display.userData.modes[0] === 'Edit'    ) undoMask( event );
     if ( display.userData.modes[0] === 'Segment2D' ) ;
-    if ( display.userData.modes[0] === 'Segment3D' ) undoSelector( event );
+    if ( display.userData.modes[0] === 'Segment3D' ) undoSelector3D( event );
 
 
   }
@@ -2120,7 +2696,7 @@ function onSwipe ( event ) {
     if ( display.userData.modes[0] === 'Inspect' ) redoScreen( event );
     if ( display.userData.modes[0] === 'Edit'    ) redoMask( event );
     if ( display.userData.modes[0] === 'Segment2D' ) ;
-    if ( display.userData.modes[0] === 'Segment3D' ) redoSelector( event );
+    if ( display.userData.modes[0] === 'Segment3D' ) redoSelector3D( event );
     
   }
 
@@ -2147,13 +2723,13 @@ function onHold ( event ) {
   if ( display.userData.modes[0] === 'Segment2D' ) ;
   if ( display.userData.modes[0] === 'Segment3D' ) {
 
-    if ( event.start ) event.userData.flag = intersectsSelector( gestures.raycasters.hand[0].ray );
+    if ( event.start ) event.userData.flag = intersectsSelector3D( gestures.raycasters.hand[0].ray );
 
     switch ( event.userData.flag ) {
 
-      case 'vertex' : onGestureMoveSelectorVertex( event ); break;
-      case 'face'   : onGestureMoveSelectorFace  ( event ); break;
-      case 'obb'    : onGestureMoveSelector      ( event ); break;
+      case 'vertex' : onGestureMoveSelectorVertex3D( event ); break;
+      case 'face'   : onGestureMoveSelectorFace3D  ( event ); break;
+      case 'obb'    : onGestureMoveSelector3D      ( event ); break;
 
     }
 
@@ -2181,7 +2757,7 @@ function onPinch ( event ) {
   if ( display.userData.modes[0] === 'Inspect' ) onGestureResizeDisplay ( event );
   if ( display.userData.modes[0] === 'Edit'    ) onGestureResizeBrush   ( event );
   if ( display.userData.modes[0] === 'Segment2D' ) ;
-  if ( display.userData.modes[0] === 'Segment3D' ) onGestureResizeSelector( event );
+  if ( display.userData.modes[0] === 'Segment3D' ) onGestureResizeSelector3D( event );
 
 } 
 
@@ -2212,11 +2788,11 @@ function onImplode ( event ) {
   if ( display.userData.modes[0] === 'Inspect') resetScreen( event );
   if ( display.userData.modes[0] === 'Edit') resetMask( event );
   if ( display.userData.modes[0] === 'Segment2D' ) ;
-  if ( display.userData.modes[0] === 'Segment3D' ) resetSelector( event );
+  if ( display.userData.modes[0] === 'Segment3D' ) resetSelector3D( event );
 
 }
 
-// gesture actions
+// general gesture actions
 
 function onGestureAttachObject ( event, object ) {
   
@@ -2516,7 +3092,7 @@ function onGestureRotateObjectOnWorldPivot ( event, object, point, direction ) {
 
 }
 
-// display gesture actions
+// display 
 
 function onGesturePlaceDisplay ( event ) {
 
@@ -2618,103 +3194,7 @@ function onGestureRotateDisplay ( event ) {
   if ( event.current ) updateDisplay();
 }
 
-// screen gesture actions
-
-function resetScreen () {
-
-  saveScreen( event );
-
-  screen.position.copy( new THREE.Vector3() );
-  screen.quaternion.copy( new THREE.Quaternion() );   
-  screen.userData.monitors.forEach( (monitor) => {
-
-    const uniforms = monitor.material.uniforms;
-    uniforms.uPlaneVisible.value = true;
-
-  });
-
-  updateDisplay();
-  
-}
-
-function saveScreen () {
-
-  screen.updateMatrix();
-
-  const record = { 
-
-    matrix: screen.matrix.clone(),
-    visible: screen.userData.monitors.map( (monitor) => monitor.material.uniforms.uPlaneVisible.value ),
-
-  };
-
-  screen.userData.history.unshift( record );
-
-}
-
-function undoScreen () {
-
-  screen.updateMatrix();
-
-  const record = { 
-
-    matrix: screen.matrix.clone(),
-    visible: screen.userData.monitors.map( (monitor) => monitor.material.uniforms.uPlaneVisible.value ),
-
-  };
-
-  screen.userData.future.unshift( record );
-
-  if ( screen.userData.history.length > 0 ) {
-
-    const record = screen.userData.history.shift();
-
-    screen.matrix.copy( record.matrix );
-    screen.matrix.decompose( screen.position, screen.quaternion, screen.scale ); 
-
-    screen.userData.monitors.forEach( (monitor, i) => {
-
-      monitor.material.uniforms.uPlaneVisible.value = record.visible[i];
-
-    } );
-
-    updateDisplay();
-
-  }
-  
-}
-
-function redoScreen () {
-  
-  screen.updateMatrix();
-
-  const record = { 
-
-    matrix: screen.matrix.clone(),
-    visible: screen.userData.monitors.map( (monitor) => monitor.material.uniforms.uPlaneVisible.value ),
-
-  };
-
-  screen.userData.history.unshift( record );
-
-  if ( screen.userData.future.length > 0 ) {
-
-    const record = screen.userData.future.shift();
-
-    screen.matrix.copy( record.matrix );
-    screen.matrix.decompose( screen.position, screen.quaternion, screen.scale ); 
-
-    screen.userData.monitors.forEach( (monitor, i) => {
-
-      monitor.material.uniforms.uPlaneVisible.value = record.visible[i];
-
-    } );
-
-    updateDisplay();
-
-  }
-
-}
+// screen
 
 function onGestureMoveScreen ( event ) {
 
@@ -2989,90 +3469,7 @@ function onGestureRotateScreenMonitor ( event ) {
 
 }
 
-// brush gesture actions
-
-function resetMask () {  
-
-  for ( let i = 0; i < mask.userData.data0.length; i++ ) {
-
-    mask.userData.texture.image.data[i] = mask.userData.data0[i];
-
-  } 
-  
-  mask.userData.texture.needsUpdate = true;
-
-  // update uniforms
-
-  updateModelUniformsMask();
-  updateScreenUniformsMask();
-
-  computeModelBoundingBox();
-  updateModelUniformsBox();
-
-  updateDisplay();
-}
-
-function undoMask () {
-  
-  if ( mask.userData.history.length > 0 ) {
-
-    updateModel();
-
-    const recordPrevious = mask.userData.history.shift();
-    const recordCurrent = { indices: [ ...recordPrevious.indices ], data: [], box: model.userData.box.clone() };
-
-    // change the data of texture to the previous record
-    // and save the current data to a future record
-    for ( let i = 0; i < recordPrevious.indices.length; i++ ) {
-
-      const n = recordPrevious.indices[ i ];
-      recordCurrent.data.push( mask.userData.texture.image.data[ n ] );
-      mask.userData.texture.image.data[ n ] = recordPrevious.data[ i ];
-
-    }
-
-    mask.userData.future.unshift( recordCurrent );
-    mask.userData.texture.needsUpdate = true;
-    model.userData.box.copy( recordPrevious.box );
-
-    updateModelUniformsBox();
-    updateModelUniformsMask();
-    updateScreenUniformsMask();
-
-    updateModel();
-    updateScreen();
-
-  }
-  
-}
-
-function redoMask () {
-  
-  if ( mask.userData.future.length > 0 ) {
-
-    updateModel();
-
-    const recordNext = mask.userData.future.shift();
-    const recordCurrent = { indices: [ ...recordNext.indices ], data: [], box: model.userData.box.clone() };
-
-    for ( let i = 0; i < recordNext.indices.length; i++ ) {
-
-      const n = recordNext.indices[ i ];
-      recordCurrent.data.push( mask.userData.texture.image.data[ n ] );
-      mask.userData.texture.image.data[ n ] = recordNext.data[ i ];
-
-    }
-
-    mask.userData.history.unshift( recordCurrent );
-    mask.userData.texture.needsUpdate = true;
-    model.userData.box.copy( recordNext.box );
-
-    updateModelUniforms();
-    updateScreenUniforms();
-
-  }
-
-}
+// brush
 
 function onGestureEditMask ( event ) {
 
@@ -3192,22 +3589,22 @@ function onGestureResizeBrush ( event ) {
 
 }
 
-// selector gesture actions 
+// selector3D
 
-async function computeSegmentation() {
+async function computeSegmentation3D() {
 
   const array = new Uint8Array( mask.userData.data0.length ).fill( 1 );
   return array;
 
 }
 
-async function onGestureUpdateSegmentation ( event ) {
+async function onGestureUpdateSegmentation3D ( event ) {
 
   if ( event.end ) {
 
-    const array = await computeSegmentation();
+    const array = await computeSegmentation3D();
 
-    const points = selector.userData.vertices.map( (vertex) => vertex.position.clone().applyMatrix4( selector.matrix ) );
+    const points = selector3D.userData.vertices.map( (vertex) => vertex.position.clone().applyMatrix4( selector3D.matrix ) );
     const box = new THREE.Box3().setFromPoints( points );
   
     const boxMin = positionToSample( box.min );
@@ -3227,53 +3624,53 @@ async function onGestureUpdateSegmentation ( event ) {
 
 }
 
-function onGestureResizeSelector ( event ) {
+function onGestureResizeSelector3D ( event ) {
 
-  onGestureResizeObject( event, selector );
+  onGestureResizeObject( event, selector3D );
 
-  if ( event.start ) saveSelector();
+  if ( event.start ) saveSelector3D();
   if ( event.current ) {
 
-    updateSelector();
+    updateSelector3D();
     updateScreenUniformsSelector();
 
   }
 
 }
 
-function onGestureMoveSelector ( event ) {
+function onGestureMoveSelector3D ( event ) {
 
-  onGestureTranslateObject( event, selector );
+  onGestureTranslateObject( event, selector3D );
 
-  if ( event.start ) saveSelector();
-  if ( event.current ) updateSelector();
+  if ( event.start ) saveSelector3D();
+  if ( event.current ) updateSelector3D();
 
 }
 
-function onGestureMoveSelectorVertex ( event ) {
+function onGestureMoveSelectorVertex3D ( event ) {
 
   let data = event.userData;
 
   if ( event.start ) {
 
-    data.intersection = intersectSelectorVertices( gestures.raycasters.hand[0].ray )[0];
+    data.intersection = intersectSelectorVertices3D( gestures.raycasters.hand[0].ray )[0];
 
   }
   
   if ( event.start && data.intersection ) {
 
-    saveSelector( event );
+    saveSelector3D( event );
 
     // display local coordinate system
 
     data.selector = {
-      scale0:    new THREE.Vector3().copy( selector.scale ),   
-      position0: new THREE.Vector3().copy( selector.position ),
+      scale0:    new THREE.Vector3().copy( selector3D.scale ),   
+      position0: new THREE.Vector3().copy( selector3D.position ),
     }
 
     data.matrices = {
       w: new THREE.Matrix4().copy( display.matrixWorld ).invert(), // world -> display coordinate system transformation
-      m: new THREE.Matrix4().copy( selector.matrix ), // selector -> display coordinate system transformation
+      m: new THREE.Matrix4().copy( selector3D.matrix ), // selector -> display coordinate system transformation
     }
 
     data.points = {
@@ -3307,14 +3704,14 @@ function onGestureMoveSelectorVertex ( event ) {
     data.vectors.pq.subVectors( data.points.q, data.points.p );
 
     // update selector position  
-    selector.position.copy( data.selector.position0 ).addScaledVector( data.vectors.pq, 0.5 );
+    selector3D.position.copy( data.selector.position0 ).addScaledVector( data.vectors.pq, 0.5 );
     
     // update selector scale
     data.vectors.pq.multiply( data.vectors.s );
-    selector.scale.copy( data.selector.scale0 ).add( data.vectors.pq );
+    selector3D.scale.copy( data.selector.scale0 ).add( data.vectors.pq );
 
     // update selector
-    updateSelector();
+    updateSelector3D();
     
   }
 
@@ -3328,30 +3725,30 @@ function onGestureMoveSelectorVertex ( event ) {
 
 }
 
-function onGestureMoveSelectorFace ( event ) {
+function onGestureMoveSelectorFace3D ( event ) {
 
   let data = event.userData;
 
   if ( event.start ) {
 
-    data.intersection = intersectSelectorFaces( gestures.raycasters.hand[0].ray )[0];
+    data.intersection = intersectSelectorFaces3D( gestures.raycasters.hand[0].ray )[0];
 
   }
 
   if ( event.start && data.intersection ) {
 
-    saveSelector( event );
+    saveSelector3D( event );
 
     // display local coordinate system
 
     data.selector = {
-      scale0:    new THREE.Vector3().copy( selector.scale ),   
-      position0: new THREE.Vector3().copy( selector.position ),
+      scale0:    new THREE.Vector3().copy( selector3D.scale ),   
+      position0: new THREE.Vector3().copy( selector3D.position ),
     }
 
     data.matrices = {
       w: new THREE.Matrix4().copy( display.matrixWorld ).invert(), // world -> display coordinate system transformation
-      m: new THREE.Matrix4().copy( selector.matrix ), // selector -> display coordinate system transformation
+      m: new THREE.Matrix4().copy( selector3D.matrix ), // selector -> display coordinate system transformation
     }
 
     data.points = {
@@ -3398,14 +3795,14 @@ function onGestureMoveSelectorFace ( event ) {
       data.vectors.pq.subVectors( data.points.q, data.points.p );    
 
       // update selector position  
-      selector.position.copy( data.selector.position0 ).addScaledVector( data.vectors.pq, 0.5 );
+      selector3D.position.copy( data.selector.position0 ).addScaledVector( data.vectors.pq, 0.5 );
 
       // update selector scale
       data.vectors.pq.multiply( data.vectors.s );
-      selector.scale.copy( data.selector.scale0 ).add( data.vectors.pq );
+      selector3D.scale.copy( data.selector.scale0 ).add( data.vectors.pq );
 
       // update selector
-      updateSelector();
+      updateSelector3D();
       
     }    
 
@@ -3419,25 +3816,52 @@ function onGestureMoveSelectorFace ( event ) {
 
 }
 
-// segment 2D gesture actions 
+// selector 2D 
 
-async function onGestureSegmentSlice( event ) {
+function onGestureSelect2D ( event ) {
+
+  data = event.userData;
+
+  if ( event.start ) {
+    
+    brush.userData.monitorIndex;
+
+    data.matrices = {
+      w:  new THREE.Matrix3().setFromMatrix4( screen.matrixWorld ).invert(),
+      m: new THREE.Matrix3().setFromMatrix4( screen.matrixWorld ).invert().premultiply( brush.parent.matrixWorld ),
+    }
+
+    data.points = {
+      p: new THREE.Vector3().copy( brush.position ).applyMatrix4( data.matrices.m ),
+      q: new THREE.Vector3(),
+    }
+
+    data.vectors = {
+      pq: new THREE.Vector3(),
+      s:  new THREE.Vector3().copy( mapVector( data.points.p, Math.sign ) ),
+    }
+
+  }
+
+  if ( event.current ) {
+
+    data.points.q.copy( brush.position ).applyMatrix4( data.matrices.m );
+
+    data.vectors.pq.subVectors( data.points.q, data.points.p );
+
+    // update selector position  
+    selector2D.position.copy( data.points.p ).addScaledVector( data.vectors.pq, 0.5 );
+    
+    // update selector scale
+    selector2D.scale.copy( data.vectors.pq ).multiply( data.vectors.s );;
+
+  }
 
   if ( event.end ) {
 
-    const dimension = 'z';
-    const slice = Math.round( volume.userData.image3D.getDimensionSize( dimension ) / 3 );
+    data = {};
 
-    const inputPoints = [[[
-      volume.userData.image3D.getDimensionSize( 'x' ) / 2,
-      volume.userData.image3D.getDimensionSize( 'y' ) / 2,
-    ]]];
-
-    const rawImage = await sliceToRawImage( dimension, slice, 12 );
-    const { masks, scores } = await segmentImage( rawImage, inputPoints );
-    
-  } 
-  
+  }
 
 }
 
@@ -3551,26 +3975,6 @@ function projectBoxOnPlane ( box, plane ) {
   return _box.setFromPoints( _points );
 }
 
-function positionToSample ( position ) {
-  // convert position in display's local coordinates to voxel sample vector index
-
-  const samples = mask.userData.samples;
-  const voxel = mask.userData.voxelSize;
-  const center = new THREE.Vector3().copy( mask.userData.size ).divideScalar( 2 );
-
-  const indices = new THREE.Vector3(
-    Math.round( (position.x + center.x) / voxel.x ),
-    Math.round( (position.y + center.y) / voxel.y ),
-    Math.round( (position.z + center.z) / voxel.z ),
-  );
-
-  const minIndices = new THREE.Vector3();
-  const maxIndices = new THREE.Vector3().copy( samples ).subScalar( 1 );
-  indices.clamp( minIndices, maxIndices );
-
-  return indices;
-}
-
 function positionToAxis ( position ) {
   // position in world coordinates
 
@@ -3664,23 +4068,54 @@ function transformArray ( array, box, fun ) {
 
 }
 
-function index3dToLinear ( indices, size ) {
+// voxel functions
 
-  const offsetX = indices.x;
-  const offsetY = indices.y * size.x
-  const offsetZ = indices.z * size.x * size.y
+function index3dToLinear ( index3D, size ) {  
+
+  const offsetX = index3D.x;
+  const offsetY = index3D.y * size.x;
+  const offsetZ = index3D.z * size.x * size.y;
 
   return offsetX + offsetY + offsetZ;
 
 }
 
-function indexLinearTo3d ( n, size ) {
+function indexLinearTo3d ( index, size ) {
 
-  const k = Math.floor( n / ( size.x * size.y ) ); 
-  const j = Math.floor( ( n - k * size.x * size.y ) / size.x );
-  const i = Math.floor( n - j * size.x - k * size.x * size.y ); // or index % size.x
+  const k = Math.floor( index / ( size.x * size.y ) ); 
+  const j = Math.floor( ( index - k * size.x * size.y ) / size.x );
+  const i = Math.floor( index - k * size.x * size.y - j * size.x ); // or index % size.x
 
   return _vector3.set( k, j, i );
+
+}
+
+function worldPositionToVoxel( position ) {
+
+  _matrix4.copy( display.matrixWorld ).invert();
+
+  _vector3
+  .copy( position ) // copy world position
+  .applyMatrix4( _matrix4 ) // convert from world to display local coordinates
+  .divide( volume.userData.size ) // normalize local position to range [ -0.5, 0.5 )
+  .addScalar( 0.5 ) // change offset of normalized position to range [ 0, 1 )
+  .multiply( volume.userData.samples ) // range [ 0, samples_max )
+  .floor(); // get the sample
+  
+  return _vector3;
+
+}
+
+function voxelToWorldPosition( index3D ) {
+
+  _vector3
+  .copy( index3D )  // copy index 3D 
+  .divide( volume.userData.samples ) // get the normalized position in range [ 0, 1 ];
+  .subScalar( 0.5 ) // offset normalized position to range [ -0.5, 0.5 ];
+  .multiply( volume.userData.size ) // convert to display local position
+  .applyMatrix4( display.matrixWorld ); // convert to world coordinates
+
+  return _vector3
 
 }
 
@@ -3714,4 +4149,51 @@ async function runSegmentation() {
     points: points 
   } );
 
+}
+
+// Xenova
+
+function setupWorkerXenova () {
+
+  worker = new Worker('./prm/workerXenova.js', {
+    type: 'module',
+  });
+
+  worker.addEventListener( 'message', (event) => {
+
+    if ( event.data.type === 'result' ) onWorkerXenovaDecodeResult( event );
+          
+  });
+
+}
+
+function onWorkerXenovaDecodeResult( event ) {
+
+  const { mask, scores } = event.data.data;
+
+}
+
+// Mobile Sam
+
+async function setupWorkerMobileSam() {
+
+  worker = new Worker( 'prm/workerMobileSam.js', {
+    type: 'module',
+  });
+
+  worker.addEventListener( 'message', (event) => {
+
+    if ( event.data.type === 'encode' ) onWorkerMobileSamEncodeResult( event );
+    if ( event.data.type === 'decode' ) onWorkerMobileSamDecodeResult( event );
+      
+  });
+
+  worker.postMessage( { type: 'load', data: {} } );
+  
+}
+
+function onWorkerMobileSamEncodeResult( event ) {
+}
+
+function onWorkerMobileSamDecodeResult( event ) {
 }
