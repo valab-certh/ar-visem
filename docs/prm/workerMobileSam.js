@@ -3,118 +3,108 @@ import 'https://cdnjs.cloudflare.com/ajax/libs/onnxruntime-web/1.14.0/ort.wasm.m
 
 ort.env.wasm.wasmPaths = "https://cdnjs.cloudflare.com/ajax/libs/onnxruntime-web/1.14.0/"
 
-let image;
-let embedding;  
-let encoder
-let decoder
+let tensor, embedding, encoder, decoder, image;
 
 self.onmessage = async (event) => {
 
-  let { type, data } = event.data;
+  let { type, input } = event.data;
 
   if ( type === 'load' ) {
+
+    let start = Date.now(); 
 
     ort.env.wasm.numThreads = 1;
     
     encoder = await ort.InferenceSession.create( "mobilesam.encoder.onnx" );
     decoder = await ort.InferenceSession.create( "mobilesam.decoder.quant.onnx" );
 
+    self.postMessage({
+      type: "load",    
+      output: {}, 
+    });
+
     console.log("Encoder Session", encoder);
     console.log("Decoder session", decoder);
+    console.log( `Loading models took ${ ( Date.now() - start ) / 1000 } seconds` );
 
   }
 
   if ( type === "encode" ) {
 
-    ort.env.wasm.numThreads = 1;   
-
-    image = data; // imageData format
-
-    let tensor = await ort.Tensor.fromImage( image, options = { resizedWidth: 1024, resizedHeight: 684 } );
-    tensor = tf.tensor( tensor.data, tensor.dims );
-    tensor = tensor.reshape([3, 684, 1024]);
-    tensor = tensor.transpose([1, 2, 0]).mul(255);
-    tensor = new ort.Tensor( await tensor.data(), tensor.shape );
-
-    let results;
-    const feeds = { input_image: tensor };
-
-    let start = Date.now(); 
-    
     try {
 
-      // results = image_embeddings
-      results = await encoder.run( feeds );
-      
+      let start = Date.now(); 
+
+      image  = input;
+      tensor = tf.tensor( image.data, [image.width, image.height, 1], 'float32' ); 
+      tensor = tf.div( tensor.sub( tensor.mean() ), tensor.max().sub( tensor.min() ) ).mul( 255 ); 
+      tensor = tf.image.resizeBilinear( tensor, [1024, 1024] ); 
+      tensor = tf.image.grayscaleToRGB( tensor );
+  
+      ort.env.wasm.numThreads = 1;   
+      let feeds = { input_image: new ort.Tensor( tensor.dataSync(), tensor.shape ) };
+      let results = await encoder.run( feeds ); // image_embeddings
+  
       embedding = results.image_embeddings;
-      
+
+      self.postMessage({
+        type: "encode",    
+        output: {
+          embedding: embedding
+        }, 
+      });
+
       console.log( 'Encoding result:', results );
+      console.log( `Computing image embedding took ${( Date.now() - start ) / 1000} seconds` );
 
     } catch ( error ) {
 
       console.log( `caught error: ${error}` );
 
     } 
-  
-    let end = Date.now(); 
-
-    self.postMessage({
-      type: "encode",    
-      data: {}, 
-    });
-
-    console.log( `Computing image embedding took ${(end - start) / 1000} seconds` );
 
   }
 
   if ( type === 'decode' ) {
 
-    ort.env.wasm.numThreads = 1;   
-
-    const points  = new ort.Tensor( new Float32Array( data.points.flat() ), [1, data.points.flat().length, 2]  );
-    const labels  = new ort.Tensor( new Float32Array( data.labels.flat() ), [1, data.labels.flat().length,] );
-    const mask    = new ort.Tensor( new Float32Array(256 * 256), [1, 1, 256, 256] );
-    const hasMask = new ort.Tensor( new Float32Array([0]), [1] );
-    const size    = new ort.Tensor( new Float32Array([image.height, image.width]), [2] );
-  
-    const feeds = {
-      image_embeddings: embedding,
-      point_coords: points,
-      point_labels: labels,
-      mask_input: mask,
-      has_mask_input: hasMask,
-      orig_im_size: size,
-    };
-  
-    let results;
-
-    start = Date.now();
-
     try {
 
-      // results = masks, iou_predictions, low_res_masks 
-      results = await decoder.run( feeds );
+      const start = Date.now();
 
-      console.log("Generated mask:", masks);
-     
+      ort.env.wasm.numThreads = 1;   
+
+      input.points = input.points.map( point => point.map( x => Math.round( 1024 * x ) ) );
+
+      let feeds = {
+        image_embeddings: embedding,
+        point_coords:   new ort.Tensor( new Float32Array( input.points.flat() ), [1, input.points.length, 2]  ),
+        point_labels:   new ort.Tensor( new Float32Array( input.labels ), [1, input.labels.length] ),  // label can be 0 or -1
+        mask_input:     new ort.Tensor( new Float32Array( 256 * 256 ), [1, 1, 256, 256] ),
+        has_mask_input: new ort.Tensor( new Float32Array( [0] ), [1] ),
+        orig_im_size:   new ort.Tensor( new Float32Array( [image.width, image.height] ), [2] ),
+      }
+
+      let results = await decoder.run( feeds ); // results = masks, iou_predictions, low_res_masks 
+      
+      tensor = tf.tensor( results.masks.data, results.masks.dims ).squeeze();
+      tensor = tf.mul( tensor, 255 ).maximum( 0 ).minimum( 255 );  
+      tensor = tf.greater( tensor, 0 ).mul( 255 );
+
+      self.postMessage({
+        type: "decode",
+        output: { 
+          mask: tensor.dataSync(), 
+        },
+      });
+
+      console.log( "Generated mask:", results );
+      console.log( `generating masks took ${( Date.now() - start ) / 1000} seconds` );
       
     } catch (error) {
 
       console.log(`caught error: ${error}`);
       
     }  
-
-    end = Date.now(); 
-
-  
-    self.postMessage({
-      type: "decode",
-      data: { 
-        masks: results.masks.toImageData(), 
-      },
-    });
-
-    console.log(`generating masks took ${(end - start) / 1000} seconds`);
 
   }
 

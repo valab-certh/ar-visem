@@ -5,3 +5,15 @@
 node_modules/
 data/
 docs/tmp
+docs/prm/medSam/preprocessor_config.json
+docs/prm/medSam/prompt_encoder_mask_decoder_quantized.onnx
+docs/prm/medSam/vision_encoder_quantized.onnx
+docs/prm/mobileSam/mobile_sam_image_encoder.onnx
+docs/prm/mobileSam/sam_mask_decoder_multi.onnx
+docs/prm/mobileSam/sam_mask_decoder_single.onnx
+docs/prm/mobileSamInBrowser/mobilesam.decoder.onnx
+docs/prm/mobileSamInBrowser/mobilesam.decoder.quant.onnx
+docs/prm/mobileSamInBrowser/mobilesam.encoder.onnx
+docs/prm/slimSam77/model_quantized.onnx
+docs/prm/slimSam77/prompt_encoder_mask_decoder_quantized.onnx
+docs/prm/slimSam77/vision_encoder_quantized.onnx
