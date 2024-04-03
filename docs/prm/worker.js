@@ -15,17 +15,18 @@ self.onmessage = async (event) => {
 
     ort.env.wasm.numThreads = 1;
     
-    encoder = await ort.InferenceSession.create( "mobilesam.encoder.onnx" );
+    encoder = await ort.InferenceSession.create( "mobilesam.encoder.onnx" ); 
     decoder = await ort.InferenceSession.create( "mobilesam.decoder.quant.onnx" );
 
+    // console.log("Encoder Session", encoder);
+    // console.log("Decoder session", decoder);
+  
     self.postMessage({
       type: "load",    
-      output: {}, 
+      output: {
+        time: ( Date.now() - start ) / 1000,
+      }, 
     });
-
-    console.log("Encoder Session", encoder);
-    console.log("Decoder session", decoder);
-    console.log( `Loading models took ${ ( Date.now() - start ) / 1000 } seconds` );
 
   }
 
@@ -36,26 +37,35 @@ self.onmessage = async (event) => {
       let start = Date.now(); 
 
       image  = input;
-      tensor = tf.tensor( image.data, [image.width, image.height, 1], 'float32' ); 
+      tensor = tf.tensor( image.data, [image.height, image.width, 1], 'float32' ); 
+
+      // normalize image histogram 
+      const moments = tf.moments( tensor );
+      tensor = tensor.sub( moments.mean ).div( moments.variance.sqrt() );
+
+      // normalize image values 
       tensor = tf.div( tensor.sub( tensor.mean() ), tensor.max().sub( tensor.min() ) ).mul( 255 ); 
+      
+      // prepare formatting
       tensor = tf.image.resizeBilinear( tensor, [1024, 1024] ); 
       tensor = tf.image.grayscaleToRGB( tensor );
   
-      ort.env.wasm.numThreads = 1;   
+      ort.env.wasm.numThreads = 5;   
       let feeds = { input_image: new ort.Tensor( tensor.dataSync(), tensor.shape ) };
       let results = await encoder.run( feeds ); // image_embeddings
   
       embedding = results.image_embeddings;
 
+      // console.log( 'Encoding result:', results );
+
       self.postMessage({
         type: "encode",    
         output: {
-          embedding: embedding
+          embedding: embedding,
+          time: ( Date.now() - start ) / 1000,
         }, 
       });
 
-      console.log( 'Encoding result:', results );
-      console.log( `Computing image embedding took ${( Date.now() - start ) / 1000} seconds` );
 
     } catch ( error ) {
 
@@ -71,7 +81,7 @@ self.onmessage = async (event) => {
 
       const start = Date.now();
 
-      ort.env.wasm.numThreads = 1;   
+      ort.env.wasm.numThreads = 5;   
 
       input.points = input.points.map( point => point.map( x => Math.round( 1024 * x ) ) );
 
@@ -81,7 +91,7 @@ self.onmessage = async (event) => {
         point_labels:   new ort.Tensor( new Float32Array( input.labels ), [1, input.labels.length] ),  // label can be 0 or -1
         mask_input:     new ort.Tensor( new Float32Array( 256 * 256 ), [1, 1, 256, 256] ),
         has_mask_input: new ort.Tensor( new Float32Array( [0] ), [1] ),
-        orig_im_size:   new ort.Tensor( new Float32Array( [image.width, image.height] ), [2] ),
+        orig_im_size:   new ort.Tensor( new Float32Array( [image.height, image.width] ), [2] ),
       }
 
       let results = await decoder.run( feeds ); // results = masks, iou_predictions, low_res_masks 
@@ -90,15 +100,16 @@ self.onmessage = async (event) => {
       tensor = tf.mul( tensor, 255 ).maximum( 0 ).minimum( 255 );  
       tensor = tf.greater( tensor, 0 ).mul( 255 );
 
+      // console.log( "Generated mask:", results );
+
       self.postMessage({
         type: "decode",
         output: { 
           mask: tensor.dataSync(), 
+          time: ( Date.now() - start ) / 1000,
         },
       });
 
-      console.log( "Generated mask:", results );
-      console.log( `generating masks took ${( Date.now() - start ) / 1000} seconds` );
       
     } catch (error) {
 

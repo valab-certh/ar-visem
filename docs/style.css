@@ -6,73 +6,16 @@ body {
     overflow: hidden;
   }
 
-  #info{
-    font-family: inherit;
-    left: 0;
-    padding: 5px;
-    position: absolute;
-    right: 0;
-    text-align: center;
-    top: 0;
-  }
-
-  #fileInfo{
-    color: #b64eff;
-    pointer-events: none;
-  }
-
-  #navInfo {
-    background-color: rgb(255 255 255 / 70%);
-    border-color: #FFF;
-    border-left-style: solid;
-    border-left-width: 1px;
-    border-right-style: solid;
-    border-right-width: 1px;
-    border-top-style: solid;
-    border-top-width: 1px;
-    bottom: 0;
-    font-family: inherit;
-    left: 30%;
-    padding: 5px;
-    position: absolute;
-    right: 30%;
-    text-align: center;
-  }
-
-  #fileInput{
-    font-family: inherit;
-  }
-  
-  #surfaceOpener {
+  #popup-window {
+    background: white;
+    border: 1px solid rgb(255 255 255);
+    inset: 0;
     display: none;
-  }
-
-  /* for AR functionality */
-  #overlay-content {
-    left: calc(50% - 7rem);
-    position: absolute;
-
-    /* Comment display none for dom overlay to work */
-
-    /* display: none; */
-  }
-
-  #range-container{
-    margin-top: 50px;
-  }
-
-  #clip-options {
-    visibility: hidden;
-  }
-  
-  #range-scale {
-    visibility: hidden;
-  }
-  
-  #range-clip {
-    visibility: hidden;
-  }
-
-  #label-scale {
-    visibility: hidden;
-  }
+    height: 80%;
+    margin: auto;
+    overflow: auto; /* Enable scroll if needed */
+    padding: 10px;
+    position: fixed;
+    width: 80%;
+    z-index: 1;  /* Sit on top */
+  }        

@@ -5,14 +5,13 @@ import { XRGestures } from './prm/XRGestures.js'
 import { OBB } from 'three/addons/math/OBB.js'
 import { ARButton } from 'three/addons/webxr/ARButton.js'
 import { OrbitControls } from "three/addons/controls/OrbitControls.js"
+import { TransformControls } from 'three/addons/controls/TransformControls.js';
 
 // place holder variables
 
 const _position   = new THREE.Vector3();
 const _direction  = new THREE.Vector3();
 const _scale      = new THREE.Vector3();  
-const _quaternion = new THREE.Quaternion();
-const _raycaster  = new THREE.Raycaster();
 const _vector2    = new THREE.Vector2();
 const _vector3    = new THREE.Vector3();
 const _matrix3    = new THREE.Matrix4();
@@ -35,7 +34,7 @@ const vertexModel = await loadShader('./prm/vertex_model.glsl');
 const fragmentModel = await loadShader('./prm/fragment_model.glsl');
 
 // global objects
-let camera, scene, renderer, canvas, orbitControls; // scene objects
+let camera, scene, renderer, canvas, orbitControls, transformControls; // scene objects
 
 let display, container, screen, model, brush, volume, mask, selector3D; // main objects
 
@@ -43,7 +42,7 @@ let raycaster, gestures, reticle; // helper objects
 
 let hitTestSource, hitTestSourceRequested, hitTestResult; // parameters AR
 
-let worker;
+let workers;
 
 main();
 
@@ -53,7 +52,7 @@ function main () {
   setupScene();
   setupGui();
   setupButton();
-  setupWorker();
+  setupWorkers();
   
   renderer.setAnimationLoop( updateAnimation );
 
@@ -90,7 +89,8 @@ function setupScene () {
     alpha: true,
     antialias: false, 
     sortObjects: false,
-    powerPreference: "low-power",
+    powerPreference: "low-power",    
+    preserveDrawingBuffer: true
   } );
 
   renderer.setPixelRatio( window.devicePixelRatio ); // maybe change to 2 for performance
@@ -107,6 +107,15 @@ function setupScene () {
   orbitControls = new OrbitControls( camera, canvas );
   orbitControls.target.set( 0, 0, 0 );
   orbitControls.update(); 
+
+  // transform
+
+  transformControls = new TransformControls( camera, canvas );
+  transformControls.addEventListener( 'dragging-changed', (event) => orbitControls.enabled = !event.value); 
+  transformControls.enabled = false;
+  transformControls.visible = false;
+  //transformControls.attach( screen );
+
  
   // scene
 
@@ -117,6 +126,7 @@ function setupScene () {
   scene.add( camera )
   scene.add( display );
   scene.add( reticle );
+  scene.add( transformControls );
 
   display.add( screen );
   display.add( model );
@@ -131,7 +141,8 @@ function setupScene () {
   // event listeners
 
   window.addEventListener( 'resize', onResize );  
-  
+  window.addEventListener( 'keydown', onKeydown );
+
   // setup 
 
   setupDisplay();
@@ -142,27 +153,64 @@ function setupScene () {
 
 function setupGui () {
 
-  const gui = new GUI( { closeFolders: false } );
-  const [folders, buttons] = [0, 1].map( () => [] );
+  const gui = new GUI( { closeFolders: true } );
   gui.domElement.classList.add( 'force-touch-styles' );
   
+  const folders = [];
+  const controls = [];
+
   // volume
 
+  controls[0] = [];
+  controls[0][0] = document.getElementById( 'volumeId' ); 
+  controls[0][0].addEventListener( 'change', (event) => onVolumeUpload( event ) );  
+  
   folders[0] = gui.addFolder( 'Volume' );  
+  folders[0].add( controls[0][0], 'click' ).name('Upload');  
 
-  buttons[0] = document.getElementById( 'volumeId' ); 
-  folders[0].add( buttons[0], 'click' ).name('Upload Volume');  
-  buttons[0].addEventListener( 'change', (event) => onVolumeUpload( event ) );  
-    
   // mask
 
+  controls[1] = [];
+  controls[1][0] = document.getElementById( 'maskId' ); 
+  controls[1][0].addEventListener( 'change', (event) => onMaskUpload( event ) );
+
   folders[1] = gui.addFolder('Mask');
+  folders[1].add( controls[1][0], 'click' ).name('Upload'); 
+  folders[1].add( { action: onMaskDownload }, 'action' ).name('Download'); 
 
-  buttons[1] = document.getElementById( 'maskId' ); 
-  folders[1].add( buttons[1], 'click' ).name('Upload Mask'); 
-  buttons[1].addEventListener( 'change', (event) => onMaskUpload( event ) );
+  // examples
 
-  folders[1].add( { action: onMaskDownload }, 'action' ).name('Download Mask'); 
+  controls[3] = [];
+  controls[3][0] = document.getElementById( 'volumeFile' ); 
+  controls[3][1] = document.getElementById( 'maskFile' ); 
+
+  folders[3] = gui.addFolder('Examples');
+  folders[3].add( controls[3][0], 'click' ).name('Volume');  
+  folders[3].add( controls[3][1], 'click' ).name('Mask');  
+
+  // info
+
+  var popupWindow = document.getElementById("popup-window");
+  var closeButton = document.getElementById("close-button"); 
+  closeButton.addEventListener("click", function() {
+    popupWindow.style.display = "none";
+  });
+
+
+  controls[2] = document.getElementById("popup-link");
+  controls[2].addEventListener("click", function(event) {
+    event.preventDefault();
+    popupWindow.style.display = "block";
+  });
+
+  folders[2] = gui.addFolder('Info');
+  folders[2].add( controls[2], 'click' ).name('Open'); 
+
+
+  // extra
+
+  // folders[3] = gui.addFolder('Snapshot');
+  // folders[3].add( { action: getVolumeSlice }, 'action' ).name('Take'); 
 
 }
 
@@ -291,6 +339,10 @@ function updateUI () {
 
   brush.visible = ( mode === 'Edit' ||  mode === 'Segment' );
   selector3D.visible = ( mode === 'Segment3D' );
+
+  display.userData.points.forEach( (point) => {
+    point.visible = ( mode === 'Segment');
+  });
 
   if ( mode === 'Place' ) {
 
@@ -549,15 +601,7 @@ function setupVolumeObject () {
   volume.userData.texture = new THREE.Data3DTexture();
   volume.userData.size = new THREE.Vector3();
   volume.userData.samples = new THREE.Vector3();
-  volume.userData.voxelSize = new THREE.Vector3();
-
-  volume.userData.slice = {};
-  volume.userData.slice.coords = [];
-  volume.userData.slice.labels = [];
-  volume.userData.slice.axis = undefined;
-  volume.userData.slice.number = undefined;
-  volume.userData.slice.data = undefined;
-  volume.userData.slice.indices = [];
+  volume.userData.voxelSize = new THREE.Vector3(); 
 
 }
 
@@ -698,6 +742,26 @@ function updateMaskTexture ( array, min, max ) {
 
 }
 
+function updateMaskTexture2 ( values, indices ) {
+
+  const index3D = new THREE.Vector3();
+
+  for ( let n = 0; n < indices.length; n++ ) {
+  
+    mask.userData.texture.image.data[indices[n]] = values[n];
+
+  }
+
+  updateScreenUniformsMask();
+  updateModelUniformsMask();
+
+  computeModelBoundingBox();
+  updateModelUniformsBox();
+
+  mask.userData.texture.needsUpdate = true;
+
+}
+
 function updateMaskFromVolume () {
     
   const image3D = volume.userData.image3D.clone();
@@ -813,7 +877,6 @@ function redoMask () {
 
 }
 
-
 // container
 
 function setupContainer() { 
@@ -926,7 +989,7 @@ function setupScreen () {
     monitor.matrixAutoUpdate = false;
     monitor.updateMatrix();
     
-    // in screen local coordinates
+    // in display local coordinates
     const normal = new THREE.Vector3( 0, 0, 1 );
     monitor.userData.plane = new THREE.Plane( normal, 0 ).applyMatrix4( monitor.matrix );
     monitor.userData.plane0 = new THREE.Plane().copy( monitor.userData.plane );
@@ -1080,7 +1143,7 @@ function intersectsScreenCenter ( rayOrOrigin, direction ) {
 
 function resetScreen () {
 
-  saveScreen( event );
+  saveScreen();
 
   screen.position.copy( new THREE.Vector3() );
   screen.quaternion.copy( new THREE.Quaternion() );   
@@ -2118,7 +2181,11 @@ function onVolumeUpload ( event ) {
     updateDisplay();
     updateUI();
 
-    runWorkerEncode();
+    // run workers for each plane
+
+    runWorkerEncode( 0 );
+    runWorkerEncode( 1 );
+    runWorkerEncode( 2 );
 
     display.visible = true;
 
@@ -2157,7 +2224,7 @@ function onMaskUpload ( event ) {
 
 }
 
-function onMaskDownload ( event) {
+function onMaskDownload ( event ) {
 
   const header = mask.userData.raw.slice( 0, 352 );
   const headerTemp = new Uint16Array( header, 0, header.length );
@@ -2178,6 +2245,46 @@ function onResize () {
 
   renderer.setSize( window.innerWidth, window.innerHeight );
 
+}
+
+function onKeydown( event ) {
+
+  switch ( event.keyCode ) {
+    case 81: // Q
+      transformControls.setSpace( transformControls.space === 'local' ? 'world' : 'local' );
+      break;
+
+    case 84: // T
+      transformControls.setMode( 'translate' );
+      break;
+
+    case 82: // R
+      transformControls.setMode( 'rotate' );
+      break;
+
+    case 83: // S
+      transformControls.setMode( 'scale' );
+      break;   
+
+    case 187:
+    case 107: // +, =, num+
+      transformControls.setSize( transformControls.size + 0.1 );
+      break;
+
+    case 189:
+    case 109: // -, _, num-
+      transformControls.setSize( Math.max( transformControls.size - 0.1, 0.1 ) );
+      break;
+
+    case 68: // D
+      transformControls.enabled = ! transformControls.enabled;
+      transformControls.visible = ! transformControls.visible;     
+      break;
+
+    case 27: // Esc
+      transformControls.reset(); 
+      break;              
+  } 
 }
 
 function onButton ( event ) {
@@ -2236,7 +2343,7 @@ function onPolytap ( event ) {
     if ( display.userData.modes[0] === 'Place' ) ;
     if ( display.userData.modes[0] === 'Inspect' ) ;
     if ( display.userData.modes[0] === 'Edit' ) ;
-    if ( display.userData.modes[0] === 'Segment' ) onGestureAddPoint2( event );
+    if ( display.userData.modes[0] === 'Segment' ) onGestureAddPoint( event );
     if ( display.userData.modes[0] === 'Segment3D' ) ;
 
   }
@@ -2256,6 +2363,19 @@ function onSwipe ( event ) {
 
   // console.log(`swipe ${event.direction}: ${display.userData.modes[0]}`);
   
+  // compute embeddings when exiting from inspect mode
+
+  if ( display.userData.modes[0] === 'Inspect' ) {
+
+    if ( event.direction === 'RIGHT' || event.direction === 'LEFT') {
+
+      runWorkerEncode(0);
+      runWorkerEncode(1);
+      runWorkerEncode(2);
+
+    }
+  }
+
   if ( event.direction === 'RIGHT' ) shiftMode( event );
   if ( event.direction === 'LEFT'  ) unshiftMode( event );
 
@@ -3075,8 +3195,8 @@ function onGestureEditMask ( event ) {
 
     // data.bounds.copy(  brush.userData.box );
     data.bounds = projectBoxOnPlane( brush.userData.box, brush.userData.plane );
-    data.bounds.min = positionToSample( data.bounds.min ).subScalar( 1 );
-    data.bounds.max = positionToSample( data.bounds.max ).addScalar( 1 );
+    data.bounds.min = localPositionToVoxel( data.bounds.min ).subScalar( 1 );
+    data.bounds.max = localPositionToVoxel( data.bounds.max ).addScalar( 1 );
     
     for (let k = data.bounds.min.z; k <= data.bounds.max.z; k++) {
       const offsetK = mask.userData.samples.x * mask.userData.samples.y * k
@@ -3173,110 +3293,39 @@ function onGestureResizeBrush ( event ) {
 
 function onGestureAddPoint ( event ) {
   
-  let data = event.userData;
-
-  if ( event.end ) {
-
-    data.center = volume.userData.size.clone().multiplyScalar( 0.5 );
-    data.offset = volume.userData.voxelSize.clone().multiplyScalar( 0.01 );    
-    data.voxelCenter = new THREE.Vector3();
-    data.voxelBox = new THREE.Box3();
-
-    const label = ( brush.userData.mode === 'ADD' ? 1 : 0 );
-    const index3D = new THREE.Vector3();
-    const coords = new THREE.Vector3();
-
-    const offset = volume.userData.voxelSize.clone().multiplyScalar( 0.01 );    
-
-    const bb = projectBoxOnPlane( brush.userData.box, brush.userData.plane );
-    bb.min = positionToSample( bb.min ).subScalar( 1 );
-    bb.max = positionToSample( bb.max ).addScalar( 1 );
-    
-    for ( let k = bb.min.z; k <= bb.max.z; k++ ) {  
-
-      for ( let j = bb.min.y; j <= bb.max.y; j++ ) {
-
-        for ( let i = bb.min.x; i <= bb.max.x; i++ ) {
-
-          data.voxelCenter.set( i, j, k ).addScalar( 0.5 ).multiply( mask.userData.voxelSize ).sub( data.center );          
-          data.voxelBox.setFromCenterAndSize( data.voxelCenter, mask.userData.voxelSize ).expandByVector( data.offset ); // in display local coordinates
-        
-          if ( data.voxelBox.intersectsPlane( brush.userData.plane )   && 
-               data.voxelBox.intersectsSphere( brush.userData.sphere ) 
-          ) {
-            
-            // we will focus only on xy planes  
-            coords.set( 
-              i / volume.userData.samples.x, 
-              j / volume.userData.samples.y 
-            );
-
-            volume.userData.slice.coords.push( [coords.x, coords.y] );
-            volume.userData.slice.labels.push( label );            
-
-          }  
-
-        }              
-      }
-    }
-
-    const point = brush.clone( false );
-    point.userData = {};
-    point.material = brush.material.clone();
-
-    display.userData.points.push( point );
-    display.add( point );
-
-    // background point
-    volume.userData.slice.labels.push(-1);
-    volume.userData.slice.coords.push([0, 0]);
-
-    runWorkerDecode();
-
-  }
-
-}
-
-function onGestureAddPoint2 ( event ) {
-  
-  let data = event.userData;
-
   if ( event.end ) {
  
+    const id = brush.userData.monitorIndex;
+    const worker = workers[id];
+    
     const label = ( brush.userData.mode === 'ADD' ? 1 : 0 );
-   
-    const coord = positionToSample( brush.position );
-    coord.set( 
-      coord.x / volume.userData.samples.x, 
-      coord.y / volume.userData.samples.y 
-    );
+    const coord = localPositionToVoxel( brush.position ).divide( volume.userData.samples );
+    const dim = [0, 1, 2].toSpliced( id, 1 );
 
-    volume.userData.slice.coords.push( [coord.x, coord.y] );
-    volume.userData.slice.labels.push( label );         
+    worker.userData.slice.coords.push( [coord.getComponent(dim[0]), coord.getComponent(dim[1])] );
+    worker.userData.slice.labels.push( label );         
+
+    // add visual point
 
     const point = brush.clone( false );
-    point.userData = {};
-
+    point.material = brush.material.clone();
+    point.material.transparent = false;
+    
     display.userData.points.push( point );
     display.add( point );
 
-    // // background point
-    // volume.userData.slice.labels.push(-1);
-    // volume.userData.slice.coords.push([0, 0]);
-
-    runWorkerDecode();
+    runWorkerDecode( id );
 
   }
 
 }
+
+function onGestureRemovePoints ( event ) {}
 
 function onGestureClearPoints ( event ) {
 
   if ( event.end ) {
-
-    volume.userData.slice.coords = [];
-    volume.userData.slice.labels = [];
-
+   
     for ( let i = 0; i < display.userData.points.length; i++ ) {
 
       display.remove( display.userData.points[i] );
@@ -3284,7 +3333,6 @@ function onGestureClearPoints ( event ) {
     }
     
     updateDisplay();
-
     resetMask();
 
   }
@@ -3308,8 +3356,8 @@ async function onGestureUpdateSegmentation3D ( event ) {
     const points = selector3D.userData.vertices.map( (vertex) => vertex.position.clone().applyMatrix4( selector3D.matrix ) );
     const box = new THREE.Box3().setFromPoints( points );
   
-    const boxMin = positionToSample( box.min );
-    const boxMax = positionToSample( box.max );
+    const boxMin = localPositionToVoxel( box.min );
+    const boxMax = localPositionToVoxel( box.max );
       
     updateMaskTexture( array, boxMin, boxMax );
     
@@ -3517,7 +3565,8 @@ function onGestureMoveSelectorFace3D ( event ) {
 
 }
 
-// helpers
+
+// utility functions
 
 async function loadShader ( url ) {
 
@@ -3628,26 +3677,6 @@ function projectBoxOnPlane ( box, plane ) {
 
 }
 
-function positionToSample ( position ) {
-  // convert position in display's local coordinates to voxel sample vector index
-
-  const samples = mask.userData.samples;
-  const voxel = mask.userData.voxelSize;
-  const center = new THREE.Vector3().copy( mask.userData.size ).divideScalar( 2 );
-
-  const indices = new THREE.Vector3(
-    Math.round( (position.x + center.x) / voxel.x ),
-    Math.round( (position.y + center.y) / voxel.y ),
-    Math.round( (position.z + center.z) / voxel.z ),
-  );
-
-  const minIndices = new THREE.Vector3();
-  const maxIndices = new THREE.Vector3().copy( samples ).subScalar( 1 );
-  indices.clamp( minIndices, maxIndices );
-
-  return indices;
-}
-
 function positionToAxis ( position ) {
   // position in world coordinates
 
@@ -3741,7 +3770,42 @@ function transformArray ( array, box, fun ) {
 
 }
 
+function bufferAction( condition, action, period = 500 ) {
+
+  const ID = setInterval( () => {
+
+    if ( condition() ) { 
+
+      clearInterval(ID);
+      action();
+
+    }
+
+  }, period ); 
+
+  return ID;
+  
+}
+
+function downloadURI(uri, name) {
+
+  const element = document.createElement("a");
+	document.body.appendChild( element );
+  element.style.display = 'none';
+
+	element.href = uri;
+	element.download = name;
+	element.click();
+  
+  // Clean up
+	window.URL.revokeObjectURL( uri );
+  document.body.removeChild( element );
+
+}
+
+
 // voxel functions
+
 
 function voxelIndex3DToLinear ( i, j, k, size ) {  
 
@@ -3759,10 +3823,30 @@ function voxelIndexLinearTo3D ( n, size ) {
 
   const k = Math.floor( n / offset ); 
   const j = Math.floor( ( n - k * offset ) / size.x );
-  const i = Math.floor( n - k * offset - j * size.x ); 
+  const i = Math.floor( n - j * size.x - k * offset ); 
 
-  return _vector3.set( k, j, i );
+  return _vector3.set( i, j, k );
 
+}
+
+function localPositionToVoxel ( position ) {
+  // convert position in display's local coordinates to voxel sample vector index
+
+  const samples = mask.userData.samples;
+  const voxel = mask.userData.voxelSize;
+  const center = new THREE.Vector3().copy( mask.userData.size ).divideScalar( 2 );
+
+  const indices = new THREE.Vector3(
+    Math.floor( (position.x + center.x) / voxel.x ),
+    Math.floor( (position.y + center.y) / voxel.y ),
+    Math.floor( (position.z + center.z) / voxel.z ),
+  );
+
+  const minIndices = new THREE.Vector3();
+  const maxIndices = new THREE.Vector3().copy( samples ).subScalar( 1 );
+  indices.clamp( minIndices, maxIndices );
+
+  return indices;
 }
 
 function worldPositionToVoxel ( position ) {
@@ -3794,7 +3878,7 @@ function voxelToWorldPosition ( index3D ) {
 
 }
 
-function getVoxelBox( indexLinearOr3D ) {
+function getVoxelBox ( indexLinearOr3D ) {
   
   if ( indexLinearOr3D instanceof THREE.Vector3 ) {
 
@@ -3824,16 +3908,18 @@ function getVoxelBox( indexLinearOr3D ) {
 
 }
 
-function getSlice( volume, size, axis, number ) {
+function getSlice ( array, size, axis, number ) {
 
-  const slice = [];  
-  const indices = [];
+  const sliceData = [];  
+  const sliceIndices = [];
 
   const i_min = ( axis === 0 ? number     : 0      );
-  const j_min = ( axis === 1 ? number     : 0      );
-  const k_min = ( axis === 2 ? number     : 0      );
   const i_max = ( axis === 0 ? number + 1 : size.x );
+
+  const j_min = ( axis === 1 ? number     : 0      );
   const j_max = ( axis === 1 ? number + 1 : size.y );
+
+  const k_min = ( axis === 2 ? number     : 0      );
   const k_max = ( axis === 2 ? number + 1 : size.z );
 
   for ( let k = k_min; k < k_max; k++ ) {
@@ -3844,140 +3930,355 @@ function getSlice( volume, size, axis, number ) {
 
         let n = voxelIndex3DToLinear( i, j, k, size );
 
-        slice.push( volume[n] );
-        indices.push( n );
+        sliceData.push( array[n] );
+        sliceIndices.push( n );
 
       }   
     }
   }
 
-  return [ slice, indices ];
+  return [ sliceData, sliceIndices ];
 
 }
 
-function getObliqueSlice( volume, size, normal, point ) {}
 
-// Mobile Sam
+// workers
 
-async function setupWorker() {
 
-  worker = new Worker( 'prm/workerMobileSam.js', {
-    type: 'module',
+async function setupWorkers() {
+
+  // one worker for each plane
+
+  if ( navigator.hardwareConcurrency < 3 ) error( 'numbers of workers is less than 3' );
+
+  workers = new Array( 3 ).fill().map( () => 
+    new Worker( 'prm/worker.js', { type: 'module' }) 
+  );
+
+  workers.forEach( (worker, i) => {
+
+    worker.userData = {
+
+      id: i,
+
+      // state variables
+      loaded: false,
+
+      encoding: false,
+      encoded: false,
+
+      decoding: false,
+      decoded: false,
+
+      // slice data
+      slice: {
+        coords: [],
+        labels: [],
+        axis: undefined,
+        number: undefined,
+        data: [],
+        indices: [],
+      },
+
+    } 
+
+    worker.addEventListener( 'message', (event) => {
+  
+      if ( event.data.type === 'load' ) onWorkerLoaded( event );
+      if ( event.data.type === 'encode' ) onWorkerEncoded( event );
+      if ( event.data.type === 'decode' ) onWorkerDecoded( event );
+        
+    });
+  
+    runWorkerLoad(i);   
+
   });
-
-  worker.userData = {
-    loaded: false,
-    encoded: false,
-    decoded: false,
-  }
-
-  worker.addEventListener( 'message', (event) => {
-
-    if ( event.data.type === 'load' ) onWorkerLoaded( event );
-    if ( event.data.type === 'encode' ) onWorkerEncoded( event );
-    if ( event.data.type === 'decode' ) onWorkerDecoded( event );
-      
-  });
-
-  worker.postMessage( { type: 'load', data: {} } );
   
 }
 
 function onWorkerLoaded( event ) {
 
-  worker.userData.loaded = true;
+  const workerData = event.currentTarget.userData;
+
+  workerData.loaded = true;
+
+  console.log( `Worker ${workerData.id}: Loading models took ${event.data.output.time} seconds` );
 
 }
 
 function onWorkerEncoded( event ) {
 
-  worker.userData.encoded = true;
+  const workerData = event.currentTarget.userData;
+
+  workerData.encoding = false;
+  workerData.encoded = true;
+
+  console.log( `Worker ${workerData.id}: Computing image embedding took ${event.data.output.time} seconds` );
 
 }
 
 function onWorkerDecoded( event ) {
 
+  const workerData = event.currentTarget.userData;
+
+  workerData.decoding = false;
+  workerData.decoded = true;
+
+  console.log( `Worker ${workerData.id}: Generating masks took ${event.data.output.time} seconds` );
+
+  // edit mask  
+
   resetMask();
 
-  for ( let i = 0; i < volume.userData.slice.indices.length; i++ ) {
-
-    let n = volume.userData.slice.indices[i]; 
-
-    mask.userData.texture.image.data[n] = event.data.output.mask[i];
-
-    // console.log( `(i,j,k) = ${formatVector(indexLinearTo3d(n,volume.userData.samples), 0)} : value = ${event.data.output.mask[i]}` )
-
-  }
-
-  updateScreenUniformsMask();
-  updateModelUniformsMask();
-
-  computeModelBoundingBox();
-  updateModelUniformsBox();
-
-  mask.userData.texture.needsUpdate = true;
-
-  worker.userData.decoded = true;
+  updateMaskTexture2( event.data.output.mask, workerData.slice.indices );
   
+
 }
 
-function runWorkerEncode() {
+function runWorkerLoad( id ) {
 
-  volume.userData.slice.axis = 2;
-  volume.userData.slice.number = Math.floor( volume.userData.samples.getComponent( volume.userData.slice.axis ) / 2 );
-  
-  [ volume.userData.slice.data, volume.userData.slice.indices ] = getSlice( 
-    volume.userData.data0, 
-    volume.userData.samples, 
-    volume.userData.slice.axis, 
-    volume.userData.slice.number 
-  )
+  console.log( `Worker ${id}: Loading models` );
 
-  worker.postMessage( { 
-    type: 'encode',
-    input: {
-      data: new Float32Array( volume.userData.slice.data ),
-      width: volume.userData.samples.x,
-      height: volume.userData.samples.y,
+  workers[id].postMessage( { type: 'load', data: {} } );
+
+}
+
+function runWorkerEncode( id ) {
+    
+  const workerData = workers[id].userData;
+
+  // Clear existing interval if it exists
+  if ( workerData.encoding ) clearInterval( workerData.encoding );
+
+  // Set a new encoding process
+  console.log( `Worker ${id}: Buffered encoding` );
+  workerData.encoding = bufferAction(
+
+    () => workerData.loaded, // Condition to check for executing the action
+    () => {
+
+      console.log( `Worker ${id}: Started encoding` );
+
+      // Define and update slice data
+      const { slice } = workerData;
+
+      slice.axis = id;
+      slice.number = localPositionToVoxel( screen.position ).getComponent( slice.axis );
+
+      // Retrieve slice data and indices
+      [ slice.data, slice.indices ] = getSlice( volume.userData.data0, volume.userData.samples, slice.axis, slice.number );
+
+      // Determine dimensions by modifying the samples array
+      const dimensions = volume.userData.samples.toArray().toSpliced( slice.axis, 1 );
+
+      // Post message to worker with the necessary data
+      workers[id].postMessage({
+        type: 'encode',
+        input: {
+          data: new Float32Array( slice.data ),
+          width: dimensions[0],
+          height: dimensions[1],
+        }
+      });
     }
+
+  );
+}
+
+function runWorkerDecode( id ) {
+
+  const workerData = workers[id].userData;
+
+  // Clear existing interval if it exists
+  if ( workerData.decoding ) clearInterval( workerData.decoding );
+
+  console.log( `Worker ${id}: Buffered decoding` );
+  workerData.decoding = bufferAction( 
+
+    () => workerData.encoded, 
+    () => {
+
+      const { slice } = workerData;
+
+      workers[id].postMessage( { 
+        type: 'decode',
+        input: {
+          points: slice.coords,
+          labels: slice.labels,
+        }
+      } );
+
+      console.log( `Worker ${id}: Started decoding` );
+
+    }
+
+  );
+
+}
+
+// oblique slice
+
+function getBox2Vertices( box ) {
+
+  const vertices = [
+   new THREE.Vector2(box.min.x, box.min.y), // 0
+   new THREE.Vector2(box.max.x, box.min.y), // 1
+   new THREE.Vector2(box.min.x, box.max.y), // 2
+   new THREE.Vector2(box.max.x, box.max.y), // 3  
+ ];
+
+ return vertices 
+
+}
+
+function getBoxVertices( box ) {
+
+   const vertices = [
+    new THREE.Vector3(box.min.x, box.min.y, box.min.z), // 0
+    new THREE.Vector3(box.max.x, box.min.y, box.min.z), // 1
+    new THREE.Vector3(box.min.x, box.max.y, box.min.z), // 2
+    new THREE.Vector3(box.max.x, box.max.y, box.min.z), // 3
+    new THREE.Vector3(box.min.x, box.min.y, box.max.z), // 4
+    new THREE.Vector3(box.max.x, box.min.y, box.max.z), // 5
+    new THREE.Vector3(box.min.x, box.max.y, box.max.z), // 6
+    new THREE.Vector3(box.max.x, box.max.y, box.max.z), // 7
+  ];
+
+  return vertices 
+
+}
+
+function getBoxEdges( box ) {
+
+  // Define the 12 edges by connecting vertices
+
+  const vertices = getBoxVertices( box );
+
+  const edges = [
+      new THREE.Line3(vertices[0], vertices[1]),
+      new THREE.Line3(vertices[1], vertices[3]),
+      new THREE.Line3(vertices[3], vertices[2]),
+      new THREE.Line3(vertices[2], vertices[0]),
+      new THREE.Line3(vertices[4], vertices[5]),
+      new THREE.Line3(vertices[5], vertices[7]),
+      new THREE.Line3(vertices[7], vertices[6]),
+      new THREE.Line3(vertices[6], vertices[4]),
+      new THREE.Line3(vertices[0], vertices[4]),
+      new THREE.Line3(vertices[1], vertices[5]),
+      new THREE.Line3(vertices[2], vertices[6]),
+      new THREE.Line3(vertices[3], vertices[7])
+  ];
+
+  return edges;
+
+}
+
+function intersectBoxEdgesWithPlane( box, plane ) {
+  
+  // box and plane need to be in the same coordinate system
+
+  const edges = getBoxEdges( box );
+  const points = edges.map( (edge) => plane.intersectLine( edge, new THREE.Vector3() ) ).filter( Boolean );
+
+  return points;
+
+}
+
+function getSliceObb( box, plane ) {
+
+  const vertices = intersectBoxEdgesWithPlane( box, plane );
+
+  const quaternion = new THREE.Quaternion().setFromUnitVectors( plane.normal, new THREE.Vector3(0,0,1) );
+  const translation = new THREE.Vector3().addScaledVector( plane.normal, plane.constant ).negate();
+  const transform = new THREE.Matrix4().compose( translation, quaternion, new THREE.Vector3(1,1,1));
+
+  const points = vertices.map( (vertex) => vertex.applyMatrix4( transform ) );
+  
+  const bounds = new THREE.Box3().setFromPoints( points );
+
+  const rect = new OBB().fromBox3( bounds ).applyMatrix4( transform.invert() );
+
+  return rect;
+
+}
+
+function getVolumeSlice( ) {
+
+  screen.rotateX(Math.PI/4);
+  screen.rotateY(Math.PI/4);
+  screen.rotateZ(Math.PI/4);
+  updateScreen();
+  updateScreenUniforms();
+
+  // plane index 
+  const index = 0;
+  const monitor = screen.userData.monitors[ index ];
+
+  // display local coordinates
+  const box = new THREE.Box3().setFromCenterAndSize( new THREE.Vector3(), volume.userData.size );
+  const plane = monitor.userData.plane.clone();
+  const boundingPoints = intersectBoxEdgesWithPlane( box, plane );
+  
+  // monitor local coordinates
+  boundingPoints.forEach( (point) => {
+
+    point.applyMatrix4( display.matrixWorld );
+    point.applyMatrix4( _matrix4.copy( monitor.matrixWorld).invert() );
+
   } );
 
+  const bounds = new OBB().fromBox3( _box.setFromPoints( boundingPoints ) );
+
+  // make ortho camera facing the slice
+  const cameraRT = new THREE.OrthographicCamera( 
+    -bounds.halfSize.x, bounds.halfSize.x,
+    -bounds.halfSize.y, bounds.halfSize.y,
+    -bounds.halfSize.z, bounds.halfSize.z,
+    0, 1
+  );
+  cameraRT.position.copy( bounds.center );
+  monitor.add( cameraRT );
+
+  // Create a WebGLRenderTarget
+  let previousRT = renderer.getRenderTarget();
+  let myRenderTarget = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight);
+
+  // Render the scene using sliceCamera into myRenderTarget
+  renderer.setRenderTarget(myRenderTarget);
+  renderer.clear(); // Clear before rendering to the render target
+
+  // prepare scene
+  renderer.setClearColor( 0x000000, 1);
+  renderer.render(scene, cameraRT); 
+  renderer.setClearColor( 0xffffff, 0);
+
+  // Extract the image data from the render target
+  const pixels = new Uint8Array(window.innerWidth * window.innerHeight * 4);
+  renderer.readRenderTargetPixels(myRenderTarget, 0, 0, window.innerWidth, window.innerHeight, pixels);
+
+  // Restore the renderer's original render target (usually null, which is the canvas)
+  renderer.setRenderTarget(previousRT);
+
+  // Create a canvas to transfer the pixels to
+  const canvas = document.createElement('canvas');
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+  const context = canvas.getContext('2d');
+
+  // Create an ImageData object and set the pixels
+  const imageData = context.createImageData(canvas.width, canvas.height);
+  imageData.data.set(pixels);
+  context.putImageData(imageData, 0, 0);
+
+  // Convert canvas to a data URL and download
+  const dataURL = canvas.toDataURL();
+  downloadURI(dataURL, "slice.png");
+
+  display.remove(cameraRT);
+
 }
 
-function runWorkerDecode() {
-
-  worker.postMessage( { 
-    type: 'decode',
-    input: {
-      points: volume.userData.slice.coords,
-      labels: volume.userData.slice.labels,
-    }
-  } );
+function computeMinimalBox2( points ) {
 
 }
 
-// NOT USED //
-
-// Xenova
-
-/*
-function setupWorkerXenova () {
-
-  worker = new Worker('./prm/workerXenova.js', {
-    type: 'module',
-  });
-
-  worker.addEventListener( 'message', (event) => {
-
-    if ( event.data.type === 'result' ) onWorkerXenovaDecodeResult( event );
-          
-  });
-
-}
-
-function onWorkerXenovaDecodeResult( event ) {
-
-  const { mask, scores } = event.data.data;
-
-}
-*/

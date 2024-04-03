@@ -1,36 +1,28 @@
 <!DOCTYPE html>
 
 <head>
-  
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Augmented Reality Tool</title>  
-  
-  <link rel="stylesheet" type="text/css" href="style.css">
-
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Augmented Reality Tool</title>
+    <link rel="stylesheet" type="text/css" href="style.css">
 </head>
 
 <body>
-
-  <!-- logo -->
-  
-  <div id="logoDiv">
-    
-    <!-- incisive logo -->
-    <div>
-      <a href="https://cordis.europa.eu/project/id/952179">
-        <img alt="INCISIVE Cordis webpage" src="https://incisive-project.eu/wp-content/uploads/2021/01/incisive-header-logo.svg" height="20">      
-      </a>
-    </div>
-
-    <!-- github repo logo-->
-    <div>
-      <a href=https://github.com/XaralampidisBasilis/incisive-ar-too>
-        <i class="fa fa-github"></i>
-      </a>
-    </div>
-    
-    <!-- download example -->
+    <!-- logo -->
+    <div id="logoDiv">
+        <!-- incisive logo -->
+        <div>
+            <a href="https://cordis.europa.eu/project/id/952179">
+                <img alt="INCISIVE Cordis webpage" src="https://incisive-project.eu/wp-content/uploads/2021/01/incisive-header-logo.svg" height="20">
+            </a>
+        </div>
+        <!-- github repo logo-->
+        <div>
+            <a href=https://github.com/XaralampidisBasilis/incisive-ar-too>
+                <i class="fa fa-github"></i>
+            </a>
+        </div>
+        <!-- download example
     <div >
       <p style="margin-bottom:0">
       <a id="volumeFile"class="filelinks" href="https://github.com/XaralampidisBasilis/incisive-ar-tool/raw/development/docs/prm/lung.nii.gz"><i class="fas fa-download"></i> volume.nii.gz</a>
@@ -39,21 +31,47 @@
       <a id="maskFile"class="filelinks" href="https://github.com/XaralampidisBasilis/incisive-ar-tool/raw/development/docs/prm/lung_mask.nii.gz"><i class="fas fa-download"></i> mask.nii.gz</a>
       </p>
     </div>
-    
-  </div>
-
-  <!-- lil-gui buttons -->
-
-  <input type="file" id="volumeId" style="display:none"/>
-  <input type="file" id="maskId"   style="display:none"/>
-  <div id="overlay-content"></div>
-  
-
-  <!-- tree.js and lil-gui and nifti-reader from cdn -->
-
-  <script src="https://cdn.jsdelivr.net/npm/nifti-reader-js@0.5.4/release/current/nifti-reader.js"></script>
-  <script type="importmap">
-    {
+  </div> -->
+        <!-- instructions -->
+        <a href="#" id="popup-link" style="display:none"></a>
+        <div id="popup-window">
+            <h1>Gestures</h1>
+            <h2>General</h2>
+            <p>swipe down: undo</p>
+            <p>swipe up: redo</p>
+            <p>swipe right/left: change mode</p>
+            <p>implode: reset</p>
+            <p>explode: exit AR</p>
+            <h2>Place</h2>
+            <p>double tap: place volume on cursor/hide volume</p>
+            <p>pan: rotate volume</p>
+            <p>pinch: scale volume</p>
+            <p>twist: roll volume </p>
+            <p>hold: move volume </p>
+            <h2>Inspect</h2>
+            <p>pan: rotate planes</p>
+            <p>twist: rotate all 3 planes</p>
+            <p>hold: move planes </p>
+            <p>hold center: move all 3 planes </p>
+            <p>double tap: hide/reveal plane</p>
+            <p>pinch: scale volume</p>
+            <h2>Edit</h2>
+            <p>pan: rotate volume</p>
+            <p>twist: change image contrast</p>
+            <p>hold: edit mask </p>
+            <p>double tap: change brush mode</p>
+            <p>pinch: scale volume</p>
+            <button id="close-button">Close</button>
+        </div>
+        <!-- lil-gui buttons -->
+        <input type="file" id="volumeId" style="display:none" />
+        <input type="file" id="maskId" style="display:none" />
+        <a id="volumeFile" class="filelinks" style="display:none" href="https://github.com/XaralampidisBasilis/incisive-ar-tool/raw/development/docs/prm/lung.nii.gz"><i class="fas fa-download"></i></a>
+        <a id="maskFile" class="filelinks" style="display:none" href="https://github.com/XaralampidisBasilis/incisive-ar-tool/raw/development/docs/prm/lung_mask.nii.gz"><i class="fas fa-download"></i></a>
+        <div id="overlay-content"></div>
+        <!-- tree.js and lil-gui and nifti-reader from cdn -->
+        <script src="https://cdn.jsdelivr.net/npm/nifti-reader-js@0.5.4/release/current/nifti-reader.js"></script>
+        <script type="importmap"> {
       "imports": {
         "lil-gui": "https://cdn.jsdelivr.net/npm/lil-gui@0.19/+esm",
         "three": "https://unpkg.com/three@0.161.0/build/three.module.js",
@@ -61,11 +79,8 @@
       }
     }
   </script>
-
-  <!-- main script -->
-  <script type="module" src="script.js"></script>
-
-
+        <!-- main script -->
+        <script type="module" src="script.js"></script>
 </body>
 
 </html>
