@@ -9,9 +9,9 @@ body {
   #popup-window {
     background: white;
     border: 1px solid rgb(255 255 255);
-    inset: 0;
     display: none;
     height: 80%;
+    inset: 0;
     margin: auto;
     overflow: auto; /* Enable scroll if needed */
     padding: 10px;

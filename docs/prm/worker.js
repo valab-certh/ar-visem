@@ -37,7 +37,7 @@ self.onmessage = async (event) => {
       let start = Date.now(); 
 
       image  = input;
-      tensor = tf.tensor( image.data, [image.height, image.width, 1], 'float32' ); 
+      tensor = tf.tensor( image.data, [image.width, image.height, 1], 'float32' ); 
 
       // normalize image histogram 
       const moments = tf.moments( tensor );
@@ -91,7 +91,7 @@ self.onmessage = async (event) => {
         point_labels:   new ort.Tensor( new Float32Array( input.labels ), [1, input.labels.length] ),  // label can be 0 or -1
         mask_input:     new ort.Tensor( new Float32Array( 256 * 256 ), [1, 1, 256, 256] ),
         has_mask_input: new ort.Tensor( new Float32Array( [0] ), [1] ),
-        orig_im_size:   new ort.Tensor( new Float32Array( [image.height, image.width] ), [2] ),
+        orig_im_size:   new ort.Tensor( new Float32Array( [image.width, image.height] ), [2] ),
       }
 
       let results = await decoder.run( feeds ); // results = masks, iou_predictions, low_res_masks 

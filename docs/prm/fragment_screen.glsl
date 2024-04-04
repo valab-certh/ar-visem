@@ -31,6 +31,9 @@ uniform vec3 uSelectorCenter;
 uniform float uBrightness;
 uniform float uContrast;
 
+// axis uniforms
+uniform float uAxisVisible;
+
 // #define epsilon 0.005
 
 out vec4 color;
@@ -106,7 +109,7 @@ void main() {
     float isBrush = uBrushVisible * isBoundarySphere( wPosition, uBrushCenter, uBrushRadius, boundarySphere );
     float isSelector = uSelectorVisible * isBoundaryBox( uPosition, uSelectorCenter, uSelectorSize, selectorBoxThickness );
     float isContainer = isBoundaryUnitBox( uPosition, boundaryBox );
-    float isAxis = isInsideAxis( uPosition, lineThickness );
+    float isAxis = uAxisVisible * isInsideAxis( uPosition, lineThickness );
  
     vec4 volumeColor = vec4( vec3( getSample( uVolumeMap, uPosition )), uPlaneAlpha );
     vec4 axisColor = vec4(volumeColor.rgb, 0.5 );
