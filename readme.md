@@ -1,37 +1,20 @@
-
 # Augmented Reality Tool
+https://augmented-reality-tool.incisive.iti.gr/
 
-https://pbizopoulos.github.io/augmented-reality-tool
+# Requirements
+POSIX Shell & Utilities
+Git
+Docker
 
-This is the repository for the Augmented Reality tool created in the context of the INCISIVE project.
+# Download
+git clone https://github.com/XaralampidisBasilis/augmented-reality-tool.git $HOME/github.com/XaralampidisBasilis/augmented-reality-tool
+cd $HOME/github.com/XaralampidisBasilis/augmented-reality-tool/
 
+# Development
+cd docs/ && make clean check all && cd ..
 
-
-## Installation
-This is an istallation process of downloading and setting up an augmented reality tool.
-### Requirements
-
-- POSIX Shell & Utilities
-- Git
-- Docker
-
-### Download
-```bash
-  git clone https://github.com/XaralampidisBasilis/INCISIVE-AR-TOOL.git 
-  cd <project folder>/<cloned repository>
-```
-### Development
-```bash
-cd docs/ && make clean
-```
-
-### Staging
-```bash
+# Staging
 cd docs/ && make STAGING=1
-```
 
-### Improvements
-```bash
-1. Lower the frame rate of the editMask function using setInterval()
-2. Make shader code more readable by having only one coordinate system
-```
+# Usage
+augmented-reality-tool README
