@@ -7,7 +7,7 @@ Git
 Docker
 
 # Download
-git clone https://github.com/XaralampidisBasilis/augmented-reality-tool.git $HOME/github.com/XaralampidisBasilis/augmented-reality-tool
+git clone https://github.com/XaralampidisBasilis/augmented-reality-tool $HOME/github.com/XaralampidisBasilis/augmented-reality-tool
 cd $HOME/github.com/XaralampidisBasilis/augmented-reality-tool/
 
 # Development
