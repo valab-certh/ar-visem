@@ -15,7 +15,7 @@
 	"devDependencies": {
 		"@biomejs/biome": "1.5.3",
 		"css-validator": "0.11.0",
-		"html-validate": "8.9.1",
+		"html-validate": "8.18.1",
 		"js-beautify": "1.14.11",
 		"raw-loader": "^4.0.2",
 		"sort-package-json": "2.7.0",
