@@ -3161,18 +3161,45 @@ function onGestureAddPoint(event) {
 }
 
 function onGestureClearPoints(event) {
+
 	if (event.end) {
-		for (let i = 0; i < display.userData.points.length; i++) {
-			display.remove(display.userData.points[i]);
+
+		const workerData = workers[0].userData;
+
+		// remove points
+		display.remove( ...display.userData.points );
+		workerData.slice.coords = [];
+		workerData.slice.labels = [];
+
+		updateDisplay();		
+
+		// reset texture data
+		const textureData = mask.userData.texture.image.data;
+		const sliceIndices = workerData.slice.indices;
+	
+		mask.userData.history.push( {
+			data: sliceIndices.map( (i) => textureData[i] ),
+			indices: Array.from( sliceIndices ),
+			box: model.userData.box.clone(),
+		} );	
+	
+		for (let n = 0; n < sliceIndices.length; n++) {
+	
+			textureData[sliceIndices[n]] = workerData.slice.textureData[n];
+	
 		}
-
-		updateDisplay();
+	
+		updateScreenUniformsMask();
+		updateModelUniformsMask();
+	
+		computeModelBoundingBox();
+		updateModelUniformsBox();
+	
+		mask.userData.texture.needsUpdate = true;
+	
 	}
+
 }
-
-function redoSegment() {}
-
-function undoSegment() {}
 
 // selector3D mode
 
@@ -3745,10 +3772,6 @@ async function setupWorkers() {
 			decoding: false,
 			decoded: false,
 
-			// undo / redo
-			future: [],
-			history: [],
-
 			// slice data
 			slice: {
 				coords: [],
@@ -3756,6 +3779,7 @@ async function setupWorkers() {
 				axis: undefined,
 				number: undefined,
 				data: [],
+				textureData: [],
 				indices: [],
 			},
 		};
@@ -3768,44 +3792,6 @@ async function setupWorkers() {
 
 		runWorkerLoad(i);
 	});
-}
-
-function onWorkerLoaded(event) {
-	const workerData = event.currentTarget.userData;
-
-	workerData.loaded = true;
-
-	console.log(
-		`Worker ${workerData.id}: Loading models took ${event.data.output.time} seconds`,
-	);
-}
-
-function onWorkerEncoded(event) {
-	brush.visible = true;
-
-	const workerData = event.currentTarget.userData;
-
-	workerData.encoding = false;
-	workerData.encoded = true;
-
-	console.log(
-		`Worker ${workerData.id}: Computing image embedding took ${event.data.output.time} seconds`,
-	);
-}
-
-function onWorkerDecoded(event) {
-	const workerData = event.currentTarget.userData;
-
-	workerData.decoding = false;
-	workerData.decoded = true;
-
-	console.log(
-		`Worker ${workerData.id}: Generating masks took ${event.data.output.time} seconds`,
-	);
-
-	// edit mask
-
-	updateMaskTexture2(event.data.output.mask, workerData.slice.indices);
 }
 
 function runWorkerLoad(id) {
@@ -3847,6 +3833,9 @@ function runWorkerEncode(id) {
 				slice.axis,
 				slice.number,
 			);
+
+			const textureData = mask.userData.texture.image.data;
+			slice.textureData = Array.from( slice.indices.map( (i) => textureData[i] ) );
 
 			// Determine dimensions by modifying the samples array
 			const dimensions = volume.userData.samples
@@ -3890,6 +3879,68 @@ function runWorkerDecode(id) {
 			console.log(`Worker ${id}: Started decoding`);
 		},
 	);
+}
+
+function onWorkerLoaded(event) {
+	const workerData = event.currentTarget.userData;
+
+	workerData.loaded = true;
+
+	console.log(
+		`Worker ${workerData.id}: Loading models took ${event.data.output.time} seconds`,
+	);
+}
+
+function onWorkerEncoded(event) {
+	brush.visible = true;
+
+	const workerData = event.currentTarget.userData;
+
+	workerData.encoding = false;
+	workerData.encoded = true;
+
+	console.log(
+		`Worker ${workerData.id}: Computing image embedding took ${event.data.output.time} seconds`,
+	);
+
+}
+
+function onWorkerDecoded(event) {
+	const workerData = event.currentTarget.userData;
+
+	workerData.decoding = false;
+	workerData.decoded = true;
+
+	console.log(
+		`Worker ${workerData.id}: Generating masks took ${event.data.output.time} seconds`,
+	);
+
+	// edit mask
+
+	const textureData = mask.userData.texture.image.data;
+	const segmentData = event.data.output.mask;
+	const sliceIndices = workerData.slice.indices;
+
+	mask.userData.history.push( {
+		data: Array.from( sliceIndices.map( (i) => textureData[i] ) ),
+		indices: Array.from( sliceIndices ),
+		box: model.userData.box.clone(),
+	} );	
+
+	for (let n = 0; n < sliceIndices.length; n++) {
+
+		textureData[sliceIndices[n]] = Math.max( workerData.slice.textureData[n], segmentData[n] );
+
+	}
+
+	updateScreenUniformsMask();
+	updateModelUniformsMask();
+
+	computeModelBoundingBox();
+	updateModelUniformsBox();
+
+	mask.userData.texture.needsUpdate = true;
+
 }
 
 // oblique slice
