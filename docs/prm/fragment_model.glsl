@@ -141,7 +141,7 @@ vec2 rayMarch( vec3 origin, vec3 direction, vec2 bounds, float step ) {
     float intensity;
     float difference;
 
-    for (; bounds.x < bounds.y; bounds.x += step) {
+    for ( ; bounds.x < bounds.y; bounds.x += step) {
 
         position += direction * step;
         intensity = getSample(position);
