@@ -3161,44 +3161,38 @@ function onGestureAddPoint(event) {
 }
 
 function onGestureClearPoints(event) {
-
 	if (event.end) {
-
 		const workerData = workers[0].userData;
 
 		// remove points
-		display.remove( ...display.userData.points );
+		display.remove(...display.userData.points);
 		workerData.slice.coords = [];
 		workerData.slice.labels = [];
 
-		updateDisplay();		
+		updateDisplay();
 
 		// reset texture data
 		const textureData = mask.userData.texture.image.data;
 		const sliceIndices = workerData.slice.indices;
-	
-		mask.userData.history.push( {
-			data: sliceIndices.map( (i) => textureData[i] ),
-			indices: Array.from( sliceIndices ),
+
+		mask.userData.history.push({
+			data: sliceIndices.map((i) => textureData[i]),
+			indices: Array.from(sliceIndices),
 			box: model.userData.box.clone(),
-		} );	
-	
+		});
+
 		for (let n = 0; n < sliceIndices.length; n++) {
-	
 			textureData[sliceIndices[n]] = workerData.slice.textureData[n];
-	
 		}
-	
+
 		updateScreenUniformsMask();
 		updateModelUniformsMask();
-	
+
 		computeModelBoundingBox();
 		updateModelUniformsBox();
-	
-		mask.userData.texture.needsUpdate = true;
-	
-	}
 
+		mask.userData.texture.needsUpdate = true;
+	}
 }
 
 // selector3D mode
@@ -3835,7 +3829,7 @@ function runWorkerEncode(id) {
 			);
 
 			const textureData = mask.userData.texture.image.data;
-			slice.textureData = Array.from( slice.indices.map( (i) => textureData[i] ) );
+			slice.textureData = Array.from(slice.indices.map((i) => textureData[i]));
 
 			// Determine dimensions by modifying the samples array
 			const dimensions = volume.userData.samples
@@ -3902,7 +3896,6 @@ function onWorkerEncoded(event) {
 	console.log(
 		`Worker ${workerData.id}: Computing image embedding took ${event.data.output.time} seconds`,
 	);
-
 }
 
 function onWorkerDecoded(event) {
@@ -3921,16 +3914,17 @@ function onWorkerDecoded(event) {
 	const segmentData = event.data.output.mask;
 	const sliceIndices = workerData.slice.indices;
 
-	mask.userData.history.push( {
-		data: Array.from( sliceIndices.map( (i) => textureData[i] ) ),
-		indices: Array.from( sliceIndices ),
+	mask.userData.history.push({
+		data: Array.from(sliceIndices.map((i) => textureData[i])),
+		indices: Array.from(sliceIndices),
 		box: model.userData.box.clone(),
-	} );	
+	});
 
 	for (let n = 0; n < sliceIndices.length; n++) {
-
-		textureData[sliceIndices[n]] = Math.max( workerData.slice.textureData[n], segmentData[n] );
-
+		textureData[sliceIndices[n]] = Math.max(
+			workerData.slice.textureData[n],
+			segmentData[n],
+		);
 	}
 
 	updateScreenUniformsMask();
@@ -3940,7 +3934,6 @@ function onWorkerDecoded(event) {
 	updateModelUniformsBox();
 
 	mask.userData.texture.needsUpdate = true;
-
 }
 
 // oblique slice
