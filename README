@@ -7,8 +7,8 @@ Git
 Docker
 
 # Download
-git clone https://github.com/XaralampidisBasilis/augmented-reality-tool $HOME/github.com/XaralampidisBasilis/augmented-reality-tool
-cd $HOME/github.com/XaralampidisBasilis/augmented-reality-tool/
+git clone https://github.com/valab-certh/augmented-reality-tool $HOME/github.com/valab-certh/augmented-reality-tool
+cd $HOME/github.com/valab-certh/augmented-reality-tool/
 
 # Development
 cd docs/ && make clean check all && cd ..
