@@ -184,8 +184,7 @@ function setupGui() {
 	controls[0][0] = document.getElementById("volumeId");
 	controls[0][0].addEventListener("change", (event) => onVolumeUpload(event));
 
-	folders[0] = gui.addFolder("Volume");
-	folders[0].add(controls[0][0], "click").name("Upload");
+	gui.add(controls[0][0], "click").name("volume upload");
 
 	// mask
 
@@ -193,19 +192,21 @@ function setupGui() {
 	controls[1][0] = document.getElementById("maskId");
 	controls[1][0].addEventListener("change", (event) => onMaskUpload(event));
 
-	folders[1] = gui.addFolder("Mask");
-	folders[1].add(controls[1][0], "click").name("Upload");
-	folders[1].add({ action: onMaskDownload }, "action").name("Download");
+	gui.add(controls[1][0], "click").name("mask upload");
+	gui.add({ action: onMaskDownload }, "action").name("mask download");
 
 	// examples
 
-	controls[3] = [];
-	controls[3][0] = document.getElementById("volumeFile");
-	controls[3][1] = document.getElementById("maskFile");
+	// controls[3] = [];
+	// controls[3][0] = document.getElementById("volumeFile");
+	// controls[3][1] = document.getElementById("maskFile");
 
-	folders[3] = gui.addFolder("Examples");
-	folders[3].add(controls[3][0], "click").name("Volume");
-	folders[3].add(controls[3][1], "click").name("Mask");
+	// folders[3] = gui.addFolder("Examples");
+	// folders[3].add(controls[3][0], "click").name("Volume");
+	// folders[3].add(controls[3][1], "click").name("Mask");
+
+	gui.add({ action: loadExample }, "action").name("example");
+
 
 	// info
 
@@ -221,8 +222,7 @@ function setupGui() {
 		popupWindow.style.display = "block";
 	});
 
-	folders[2] = gui.addFolder("Info");
-	folders[2].add(controls[2], "click").name("Open");
+	gui.add(controls[2], "click").name("help");
 
 	// extra
 
@@ -341,9 +341,12 @@ function updateUI() {
 	brush.visible = mode === "Edit" || mode === "Segment";
 	selector3D.visible = mode === "Segment3D";
 
-	for (const point of display.userData.points) {
-		point.visible = mode === "Segment";
+	if ( workers ) {
+		for (const point of workers[0].userData.slice.points) {
+			point.visible = mode === "Segment";
+		}		
 	}
+	
 
 	if (mode === "Place") {
 		container.material.opacity = 0.2;
@@ -475,7 +478,6 @@ function setupDisplay() {
 	display.userData.modes = ["Place", "Inspect", "Edit", "Segment"];
 	display.userData.history = [];
 	display.userData.future = [];
-	display.userData.points = [];
 
 	// visual UI
 
@@ -847,6 +849,39 @@ function redoMask() {
 		updateModelUniforms();
 		updateScreenUniforms();
 	}
+}
+
+function undoSegment() {
+
+	if ( workers[0].userData.history.length > 0 ) {
+		const record = workers[0].userData.history.shift();
+		display.remove( ...record.points );
+		workers[0].userData.future.unshift(record);
+	}
+
+	undoMask();
+
+}
+
+function redoSegment() {
+
+
+	if ( workers[0].userData.future.length > 0 ) {
+
+		const record = workers[0].userData.future.shift();
+
+		for ( let point of record.points ) {
+			display.add( point );
+		}
+
+		workers[0].userData.history.unshift(record);
+	}
+
+	const record = mask.userData.future[0];
+	
+
+	redoMask();
+
 }
 
 // container
@@ -2237,7 +2272,7 @@ function onSwipe(event) {
 		if (display.userData.modes[0] === "Place") undoDisplay(event);
 		if (display.userData.modes[0] === "Inspect") undoScreen(event);
 		if (display.userData.modes[0] === "Edit") undoMask(event);
-		if (display.userData.modes[0] === "Segment");
+		if (display.userData.modes[0] === "Segment") ;
 		if (display.userData.modes[0] === "Segment3D") undoSelector3D(event);
 	}
 
@@ -2245,7 +2280,7 @@ function onSwipe(event) {
 		if (display.userData.modes[0] === "Place") redoDisplay(event);
 		if (display.userData.modes[0] === "Inspect") redoScreen(event);
 		if (display.userData.modes[0] === "Edit") redoMask(event);
-		if (display.userData.modes[0] === "Segment");
+		if (display.userData.modes[0] === "Segment") ;
 		if (display.userData.modes[0] === "Segment3D") redoSelector3D(event);
 	}
 }
@@ -2315,8 +2350,7 @@ function onPan(event) {
 	// console.log(`pan: ${display.userData.modes[0]}`);
 
 	if (display.userData.modes[0] === "Place") onGestureRotateDisplay(event);
-	if (display.userData.modes[0] === "Inspect")
-		onGestureRotateScreenMonitor(event);
+	if (display.userData.modes[0] === "Inspect") onGestureRotateScreenMonitor(event);
 	if (display.userData.modes[0] === "Edit") onGestureRotateDisplay(event);
 	if (display.userData.modes[0] === "Segment") onGestureRotateDisplay(event);
 	if (display.userData.modes[0] === "Segment3D") onGestureRotateDisplay(event);
@@ -3153,7 +3187,7 @@ function onGestureAddPoint(event) {
 		point.material = brush.material.clone();
 		point.material.transparent = false;
 
-		display.userData.points.push(point);
+		worker.userData.slice.points.push(point);
 		display.add(point);
 
 		runWorkerDecode(0);
@@ -3165,7 +3199,7 @@ function onGestureClearPoints(event) {
 		const workerData = workers[0].userData;
 
 		// remove points
-		display.remove(...display.userData.points);
+		display.remove(...workerData.slice.points);
 		workerData.slice.coords = [];
 		workerData.slice.labels = [];
 
@@ -3481,6 +3515,78 @@ function loadRawNIFTI(file) {
 	});
 }
 
+async function loadExample() {
+
+	const volumeURL = "https://raw.githubusercontent.com/valab-certh/augmented-reality-tool/main/docs/prm/lung.nii.gz"
+	const maskURL = "https://raw.githubusercontent.com/valab-certh/augmented-reality-tool/main/docs/prm/lung_mask.nii.gz"
+
+	const volumeFile = await fetchFileFromURL( volumeURL, 'volume.nii.gz')
+	const maskFile = await fetchFileFromURL( maskURL, 'mask.nii.gz')
+
+	// onVolumeUpload
+	let image3D = await loadNIFTI(volumeFile)
+
+	updateVolume(image3D);
+	if (!mask.userData.image3D) updateMaskFromVolume();
+
+	setupScreen();
+	setupModel();
+	setupContainer();
+	setupSelector3D();
+	setupScreenUniforms();
+	setupModelUniforms();
+
+	updateScreenUniforms();
+	updateModelUniforms();
+	updateDisplay();
+	updateUI();
+
+	display.visible = true;
+
+	// onMaskUpload
+	image3D = await loadNIFTI(maskFile)
+
+	updateMask(image3D);
+	if (!volume.userData.image3D) updateVolumeFromMask();
+
+	setupScreen();
+	setupModel();
+	setupContainer();
+	setupSelector3D();
+	setupScreenUniforms();
+	setupModelUniforms();
+
+	updateScreenUniforms();
+	updateModelUniforms();
+	updateDisplay();
+	updateUI();
+
+	display.visible = true;
+
+	// raw nifti mask
+	loadRawNIFTI(maskFile).then((raw) => {
+		mask.userData.raw = raw;
+	});
+
+}
+
+async function fetchFileFromURL( url, filename ) {
+
+	try {
+	  const response = await fetch(url);
+	  if (!response.ok) {
+		throw new Error(`HTTP error! Status: ${response.status}`);
+	  }
+	  const blob = await response.blob();
+	  const file = new File([blob], filename, { type: blob.type });
+	  return file;
+	} catch (error) {
+	  console.error('Error fetching the file:', error);
+	  throw error; // Re-throw to allow the caller to handle it
+	}
+
+}
+
 function saveData(data, fileName) {
 	const element = document.createElement("a");
 	document.body.appendChild(element);
@@ -3599,7 +3705,7 @@ function transformArray(array, box, fun) {
 	return array;
 }
 
-function bufferAction(condition, action, period = 500) {
+function bufferAction(condition, action, period = 1000) {
 	const ID = setInterval(() => {
 		if (condition()) {
 			clearInterval(ID);
@@ -3766,8 +3872,12 @@ async function setupWorkers() {
 			decoding: false,
 			decoded: false,
 
+			history: [],
+			future: [],
+
 			// slice data
 			slice: {
+				points: [],
 				coords: [],
 				labels: [],
 				axis: undefined,
@@ -3798,19 +3908,20 @@ function runWorkerLoad(id) {
 }
 
 function runWorkerEncode(id) {
-	brush.visible = false;
 
 	const workerData = workers[id].userData;
 
 	// Clear existing interval if it exists
-	if (workerData.encoding) clearInterval(workerData.encoding);
+	if (workerData.encoding) {
+		console.log(`Worker ${id} session ${workerData.decoding}: canceled buffered encoding`);
+		clearInterval(workerData.encoding)
+	}
 
 	// Set a new encoding process
-	console.log(`Worker ${id}: Buffered encoding`);
 	workerData.encoding = bufferAction(
 		() => workerData.loaded, // Condition to check for executing the action
 		() => {
-			console.log(`Worker ${id}: Started encoding`);
+			console.log(`Worker ${id} session ${workerData.encoding}: started encoding`);
 
 			// Define and update slice data
 			const { slice } = workerData;
@@ -3847,15 +3958,18 @@ function runWorkerEncode(id) {
 			});
 		},
 	);
+
+	console.log(`Worker ${id} session ${workerData.encoding}: buffered encoding`);
 }
 
 function runWorkerDecode(id) {
 	const workerData = workers[id].userData;
 
 	// Clear existing interval if it exists
-	if (workerData.decoding) clearInterval(workerData.decoding);
-
-	console.log(`Worker ${id}: Buffered decoding`);
+	if (workerData.decoding) {
+		console.log(`Worker ${id} session ${workerData.decoding}: canceled buffered decoding `);
+		clearInterval(workerData.decoding)
+	}
 
 	workerData.decoding = bufferAction(
 		() => workerData.encoded,
@@ -3870,9 +3984,11 @@ function runWorkerDecode(id) {
 				},
 			});
 
-			console.log(`Worker ${id}: Started decoding`);
+			console.log(`Worker ${id}  session ${workerData.decoding}: started decoding`);
 		},
 	);
+
+	console.log(`Worker ${id} session ${workerData.decoding}: buffered decoding`);
 }
 
 function onWorkerLoaded(event) {
@@ -3890,23 +4006,25 @@ function onWorkerEncoded(event) {
 
 	const workerData = event.currentTarget.userData;
 
+	console.log(
+		`Worker ${workerData.id} session ${workerData.encoding}: Computing image embedding took ${event.data.output.time} seconds`,
+	);
+
 	workerData.encoding = false;
 	workerData.encoded = true;
 
-	console.log(
-		`Worker ${workerData.id}: Computing image embedding took ${event.data.output.time} seconds`,
-	);
 }
 
 function onWorkerDecoded(event) {
 	const workerData = event.currentTarget.userData;
 
+	console.log(
+		`Worker ${workerData.id} session ${workerData.decoding}: Generating masks took ${event.data.output.time} seconds`,
+	);
+
+	
 	workerData.decoding = false;
 	workerData.decoded = true;
-
-	console.log(
-		`Worker ${workerData.id}: Generating masks took ${event.data.output.time} seconds`,
-	);
 
 	// edit mask
 
@@ -3914,11 +4032,15 @@ function onWorkerDecoded(event) {
 	const segmentData = event.data.output.mask;
 	const sliceIndices = workerData.slice.indices;
 
-	mask.userData.history.push({
+	mask.userData.history.unshift({
 		data: Array.from(sliceIndices.map((i) => textureData[i])),
 		indices: Array.from(sliceIndices),
 		box: model.userData.box.clone(),
 	});
+
+	workerData.history.unshift( 
+		{ points: [...workerData.slice.points ] }
+	)
 
 	for (let n = 0; n < sliceIndices.length; n++) {
 		textureData[sliceIndices[n]] = Math.max(

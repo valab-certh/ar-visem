@@ -21,31 +21,45 @@
     <a href="#" id="popup-link" style="display:none"></a>
     <div id="popup-window">
         <h1>Gestures</h1>
+
         <h2>General</h2>
         <p>swipe down: undo</p>
         <p>swipe up: redo</p>
-        <p>swipe right/left: change mode</p>
+        <p>swipe right or left: change mode</p>
         <p>implode: reset</p>
         <p>explode: exit AR</p>
-        <h2>Place</h2>
-        <p>double tap: place volume on cursor/hide volume</p>
-        <p>pan: rotate volume</p>
-        <p>pinch: scale volume</p>
+
+        <h2>Place Volume</h2>
+        <p>double tap: place volume on cursor or hides it </p>
+        <p>pan: rotate volume </p>
+        <p>pinch: scale volume </p>
         <p>twist: roll volume </p>
-        <p>hold: move volume </p>
-        <h2>Inspect</h2>
+        <p>hold: translate volume in space </p>
+
+        <h2>Inspect Volume</h2>
         <p>pan: rotate planes</p>
         <p>twist: rotate all 3 planes</p>
-        <p>hold: move planes </p>
-        <p>hold center: move all 3 planes </p>
-        <p>double tap: hide/reveal plane</p>
+        <p>hold: translate plane parallel to its direction</p>
+        <p>hold intersection of planes: translate all 3 planes together </p>
+        <p>double tap: hide or reveal a plane</p>
         <p>pinch: scale volume</p>
-        <h2>Edit</h2>
+
+        <h2>Edit Volume</h2>
         <p>pan: rotate volume</p>
         <p>twist: change image contrast</p>
         <p>hold: edit mask </p>
         <p>double tap: change brush mode</p>
         <p>pinch: scale volume</p>
+
+        <h2>Segment Volume</h2>
+        <p>pan: rotate volume</p>
+        <p>twist: roll volume </p>
+        <p>pinch: scale volume</p>
+        <p>hold: move z plane </p>
+        <p>single tap: place point to the z-plane and begin segmentation</p>
+        <p>double tap: change mode between include or exclude point in segmentation mask</p>
+        <p>implode: remove all points and clear segmentation mask</p>
+
         <button type="button" id="close-button">Close</button>
     </div>
     <!-- lil-gui buttons -->
