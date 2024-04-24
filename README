@@ -2,7 +2,7 @@
 # AR Tool for Visualization, Segmentation and Interactive Mask Editing
 https://valab-certh.github.io/ar-visem
 
-# Requirements
+# Development requirements
 POSIX Shell & Utilities
 Git
 Docker
