@@ -1,4 +1,5 @@
-# Augmented Reality Tool
+# AR-ViSeM
+# AR Tool for Visualization, Segmentation and Interactive Mask Editing
 https://valab-certh.github.io/ar-visem
 
 # Requirements
@@ -15,3 +16,4 @@ cd docs/ && make clean check all && cd ..
 
 # Staging
 cd docs/ && make STAGING=1
+
