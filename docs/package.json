@@ -10,7 +10,7 @@
 	},
 	"dependencies": {
 		"glsl-loader": "^0.0.1",
-		"serve": "14.2.1"
+		"serve": "14.2.3"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "1.6.4",
